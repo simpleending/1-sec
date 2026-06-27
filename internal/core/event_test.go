@@ -198,6 +198,31 @@ func TestSecurityEvent_EmptyDetails(t *testing.T) {
 	}
 }
 
+func TestCanonicalEventSchemas_ModelInferenceTensorMetadata(t *testing.T) {
+	schema, ok := EventSchemaMap()["model_inference"]
+	if !ok {
+		t.Fatal("model_inference schema should be registered")
+	}
+
+	hasTensorShape := false
+	for _, key := range schema.OptionalKeys {
+		if key == "tensor_shape" {
+			hasTensorShape = true
+			break
+		}
+	}
+	if !hasTensorShape {
+		t.Fatal("model_inference schema should document tensor_shape")
+	}
+
+	ev := NewSecurityEvent("data_poisoning", "model_inference", SeverityInfo, "inference")
+	ev.Details["model_id"] = "model-prod"
+	ev.Details["tensor_shape"] = []int{1, 3, 224, 224}
+	if missing := ValidateEvent(ev); len(missing) != 0 {
+		t.Fatalf("ValidateEvent() missing keys = %v", missing)
+	}
+}
+
 func TestCanonicalizeEventRouting_ValidTokensUnchanged(t *testing.T) {
 	ev := NewSecurityEvent("network_guardian", "dns_query", SeverityInfo, "dns")
 	CanonicalizeEventRouting(ev)

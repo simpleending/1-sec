@@ -382,6 +382,62 @@ func TestGuard_HandleEvent_Inference_LowConfidence(t *testing.T) {
 	}
 }
 
+func TestGuard_HandleEvent_Inference_TensorRankAnomaly(t *testing.T) {
+	cp := makeCapturingPipeline()
+	g := startedModuleWithPipeline(t, cp)
+	defer g.Stop()
+
+	ev := core.NewSecurityEvent("test", "model_inference", core.SeverityInfo, "inference")
+	ev.Details["model_id"] = "vision-prod"
+	ev.Details["tensor_shape"] = []int{1, 2, 3, 4, 5, 6, 7, 8, 9}
+
+	if err := g.HandleEvent(ev); err != nil {
+		t.Fatalf("HandleEvent() error: %v", err)
+	}
+
+	if !cp.hasAlertType("tensor_metadata_anomaly") {
+		t.Error("expected tensor_metadata_anomaly alert for rank > 8")
+	}
+}
+
+func TestGuard_HandleEvent_Inference_NestedEmbeddingMetadataAnomaly(t *testing.T) {
+	cp := makeCapturingPipeline()
+	g := startedModuleWithPipeline(t, cp)
+	defer g.Stop()
+
+	ev := core.NewSecurityEvent("test", "model_inference", core.SeverityInfo, "inference")
+	ev.Details["model_id"] = "rag-embedder"
+	ev.Details["body"] = `{"embedding":{"shape":[512,512,512],"sparsity_ratio":0.995}}`
+
+	if err := g.HandleEvent(ev); err != nil {
+		t.Fatalf("HandleEvent() error: %v", err)
+	}
+
+	if !cp.hasAlertType("tensor_metadata_anomaly") {
+		t.Error("expected tensor_metadata_anomaly alert for sparse embedding metadata")
+	}
+}
+
+func TestGuard_HandleEvent_Inference_CleanTensorMetadata(t *testing.T) {
+	cp := makeCapturingPipeline()
+	g := startedModuleWithPipeline(t, cp)
+	defer g.Stop()
+
+	ev := core.NewSecurityEvent("test", "model_inference", core.SeverityInfo, "inference")
+	ev.Details["model_id"] = "vision-prod"
+	ev.Details["confidence"] = 0.95
+	ev.Details["tensor_shape"] = []int{1, 3, 224, 224}
+	ev.Details["sparsity_ratio"] = 0.2
+
+	if err := g.HandleEvent(ev); err != nil {
+		t.Fatalf("HandleEvent() error: %v", err)
+	}
+
+	if cp.hasAlertType("tensor_metadata_anomaly") {
+		t.Error("did not expect tensor_metadata_anomaly for normal image tensor metadata")
+	}
+}
+
 func TestGuard_HandleEvent_ModelUpdate_Tampering(t *testing.T) {
 	cp := makeCapturingPipeline()
 	g := startedModuleWithPipeline(t, cp)

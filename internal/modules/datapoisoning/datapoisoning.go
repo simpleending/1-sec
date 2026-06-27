@@ -1,13 +1,16 @@
 package datapoisoning
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"math"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +20,13 @@ import (
 )
 
 const ModuleName = "data_poisoning"
+
+const (
+	maxTensorRank      = 8
+	maxTensorElements  = int64(100_000_000)
+	maxSparsityRatio   = 0.99
+	maxTensorJSONBytes = 256 * 1024
+)
 
 // Guard is the Data Poisoning Guard module providing training data integrity,
 // RAG source verification, adversarial input detection, and model drift monitoring.
@@ -160,6 +170,18 @@ func (g *Guard) handleInference(event *core.SecurityEvent) {
 	modelID := getStringDetail(event, "model_id")
 	confidence := getFloatDetail(event, "confidence")
 	inputHash := getStringDetail(event, "input_hash")
+
+	if finding := detectTensorMetadataAnomaly(event); finding != nil {
+		modelLabel := modelID
+		if modelLabel == "" {
+			modelLabel = "unknown model"
+		}
+		g.raiseAlert(event, core.SeverityCritical,
+			"Suspicious Tensor Metadata",
+			fmt.Sprintf("Model %s received suspicious tensor metadata from %s: %s. rank=%d elements=%d sparsity_ratio=%.4f",
+				modelLabel, finding.Source, finding.Reason, finding.Rank, finding.Elements, finding.SparsityRatio),
+			"tensor_metadata_anomaly")
+	}
 
 	if modelID == "" {
 		return
@@ -521,6 +543,384 @@ func getFloatDetail(event *core.SecurityEvent, key string) float64 {
 		return float64(v)
 	}
 	return 0
+}
+
+type tensorMetadata struct {
+	Source           string
+	Shape            []int64
+	Elements         int64
+	HasElements      bool
+	SparsityRatio    float64
+	HasSparsityRatio bool
+}
+
+type tensorMetadataFinding struct {
+	Source        string
+	Reason        string
+	Rank          int
+	Elements      int64
+	SparsityRatio float64
+}
+
+func detectTensorMetadataAnomaly(event *core.SecurityEvent) *tensorMetadataFinding {
+	for _, meta := range collectTensorMetadata(event) {
+		if finding := validateTensorMetadata(meta); finding != nil {
+			return finding
+		}
+	}
+	return nil
+}
+
+func collectTensorMetadata(event *core.SecurityEvent) []tensorMetadata {
+	if event == nil {
+		return nil
+	}
+	var metas []tensorMetadata
+	if event.Details != nil {
+		metas = append(metas, collectTensorMetadataValue("details", event.Details, 0)...)
+	}
+	if len(event.RawData) > 0 && len(event.RawData) <= maxTensorJSONBytes {
+		metas = append(metas, collectTensorMetadataJSON("raw_data", event.RawData, 0)...)
+	}
+	return metas
+}
+
+func collectTensorMetadataValue(source string, value interface{}, depth int) []tensorMetadata {
+	if depth > 4 || value == nil {
+		return nil
+	}
+
+	switch v := value.(type) {
+	case map[string]interface{}:
+		return collectTensorMetadataMap(source, v, depth)
+	case map[string]string:
+		m := make(map[string]interface{}, len(v))
+		for key, val := range v {
+			m[key] = val
+		}
+		return collectTensorMetadataMap(source, m, depth)
+	case []interface{}:
+		var metas []tensorMetadata
+		for i, item := range v {
+			if i >= 16 {
+				break
+			}
+			metas = append(metas, collectTensorMetadataValue(fmt.Sprintf("%s[%d]", source, i), item, depth+1)...)
+		}
+		return metas
+	case string:
+		s := strings.TrimSpace(v)
+		if len(s) == 0 || len(s) > maxTensorJSONBytes || (s[0] != '{' && s[0] != '[') {
+			return nil
+		}
+		return collectTensorMetadataJSON(source, []byte(s), depth+1)
+	case json.RawMessage:
+		if len(v) > maxTensorJSONBytes {
+			return nil
+		}
+		return collectTensorMetadataJSON(source, v, depth+1)
+	default:
+		return nil
+	}
+}
+
+func collectTensorMetadataMap(source string, m map[string]interface{}, depth int) []tensorMetadata {
+	var metas []tensorMetadata
+	meta := tensorMetadata{Source: source}
+	if shape, ok := firstShape(m, "tensor_shape", "embedding_shape", "shape", "dimensions", "dims"); ok {
+		meta.Shape = shape
+	}
+	if elements, ok := firstInt64(m, "tensor_elements", "embedding_elements", "elements", "num_elements", "element_count", "size"); ok {
+		meta.Elements = elements
+		meta.HasElements = true
+	}
+	if ratio, ok := firstFloat64(m, "tensor_sparsity_ratio", "embedding_sparsity_ratio", "sparsity_ratio", "sparsity"); ok {
+		meta.SparsityRatio = ratio
+		meta.HasSparsityRatio = true
+	}
+	if len(meta.Shape) > 0 || meta.HasElements || meta.HasSparsityRatio {
+		metas = append(metas, meta)
+	}
+
+	for key, value := range m {
+		if !isTensorMetadataContainer(key) {
+			continue
+		}
+		metas = append(metas, collectTensorMetadataValue(source+"."+key, value, depth+1)...)
+	}
+
+	return metas
+}
+
+func collectTensorMetadataJSON(source string, data []byte, depth int) []tensorMetadata {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || len(trimmed) > maxTensorJSONBytes || (trimmed[0] != '{' && trimmed[0] != '[') {
+		return nil
+	}
+	dec := json.NewDecoder(bytes.NewReader(trimmed))
+	dec.UseNumber()
+	var value interface{}
+	if err := dec.Decode(&value); err != nil {
+		return nil
+	}
+	return collectTensorMetadataValue(source, value, depth+1)
+}
+
+func validateTensorMetadata(meta tensorMetadata) *tensorMetadataFinding {
+	finding := &tensorMetadataFinding{
+		Source:        meta.Source,
+		Rank:          len(meta.Shape),
+		Elements:      meta.Elements,
+		SparsityRatio: meta.SparsityRatio,
+	}
+
+	if len(meta.Shape) > maxTensorRank {
+		finding.Reason = fmt.Sprintf("rank %d exceeds maximum supported rank %d", len(meta.Shape), maxTensorRank)
+		return finding
+	}
+
+	if len(meta.Shape) > 0 {
+		elements, valid := tensorShapeElementCount(meta.Shape)
+		if !valid {
+			finding.Reason = "shape contains a negative dimension"
+			return finding
+		}
+		if !meta.HasElements {
+			finding.Elements = elements
+		}
+		if elements > maxTensorElements {
+			finding.Reason = fmt.Sprintf("shape expands to %d elements, exceeding limit %d", elements, maxTensorElements)
+			return finding
+		}
+	}
+
+	if meta.HasElements && meta.Elements > maxTensorElements {
+		finding.Reason = fmt.Sprintf("declared element count %d exceeds limit %d", meta.Elements, maxTensorElements)
+		return finding
+	}
+	if meta.HasElements && meta.Elements < 0 {
+		finding.Reason = "declared element count is negative"
+		return finding
+	}
+
+	if meta.HasSparsityRatio {
+		if math.IsNaN(meta.SparsityRatio) || math.IsInf(meta.SparsityRatio, 0) {
+			finding.Reason = "sparsity ratio is non-finite"
+			return finding
+		}
+		if meta.SparsityRatio < 0 || meta.SparsityRatio > 1 {
+			finding.Reason = fmt.Sprintf("sparsity ratio %.4f is outside [0,1]", meta.SparsityRatio)
+			return finding
+		}
+		if meta.SparsityRatio > maxSparsityRatio {
+			finding.Reason = fmt.Sprintf("sparsity ratio %.4f exceeds %.2f", meta.SparsityRatio, maxSparsityRatio)
+			return finding
+		}
+	}
+
+	return nil
+}
+
+func tensorShapeElementCount(shape []int64) (int64, bool) {
+	if len(shape) == 0 {
+		return 0, true
+	}
+	elements := int64(1)
+	for _, dim := range shape {
+		if dim < 0 {
+			return 0, false
+		}
+		if dim == 0 {
+			return 0, true
+		}
+		if elements > maxTensorElements/dim {
+			return maxTensorElements + 1, true
+		}
+		elements *= dim
+	}
+	return elements, true
+}
+
+func isTensorMetadataContainer(key string) bool {
+	switch strings.ToLower(key) {
+	case "tensor", "tensors", "input_tensor", "output_tensor", "embedding", "embeddings",
+		"input_embedding", "multimodal_embedding", "metadata", "tensor_metadata",
+		"embedding_metadata", "payload", "body", "request_body", "request", "data",
+		"parameters", "arguments", "input", "inputs":
+		return true
+	default:
+		return false
+	}
+}
+
+func firstShape(m map[string]interface{}, keys ...string) ([]int64, bool) {
+	for _, key := range keys {
+		if shape, ok := toInt64Slice(m[key]); ok {
+			return shape, true
+		}
+	}
+	return nil, false
+}
+
+func firstInt64(m map[string]interface{}, keys ...string) (int64, bool) {
+	for _, key := range keys {
+		if n, ok := toInt64(m[key]); ok {
+			return n, true
+		}
+	}
+	return 0, false
+}
+
+func firstFloat64(m map[string]interface{}, keys ...string) (float64, bool) {
+	for _, key := range keys {
+		if n, ok := toFloat64(m[key]); ok {
+			return n, true
+		}
+	}
+	return 0, false
+}
+
+func toInt64Slice(value interface{}) ([]int64, bool) {
+	switch v := value.(type) {
+	case []int:
+		shape := make([]int64, len(v))
+		for i, dim := range v {
+			shape[i] = int64(dim)
+		}
+		return shape, true
+	case []int64:
+		return append([]int64(nil), v...), true
+	case []float64:
+		shape := make([]int64, len(v))
+		for i, dim := range v {
+			if math.IsNaN(dim) || math.IsInf(dim, 0) || math.Trunc(dim) != dim {
+				return nil, false
+			}
+			shape[i] = int64(dim)
+		}
+		return shape, true
+	case []interface{}:
+		shape := make([]int64, len(v))
+		for i, item := range v {
+			dim, ok := toInt64(item)
+			if !ok {
+				return nil, false
+			}
+			shape[i] = dim
+		}
+		return shape, true
+	case string:
+		return parseShapeString(v)
+	default:
+		return nil, false
+	}
+}
+
+func parseShapeString(value string) ([]int64, bool) {
+	s := strings.TrimSpace(value)
+	if s == "" {
+		return nil, false
+	}
+	if strings.HasPrefix(s, "[") {
+		var arr []interface{}
+		dec := json.NewDecoder(strings.NewReader(s))
+		dec.UseNumber()
+		if err := dec.Decode(&arr); err != nil {
+			return nil, false
+		}
+		return toInt64Slice(arr)
+	}
+	parts := strings.FieldsFunc(s, func(r rune) bool {
+		return r == ',' || r == 'x' || r == 'X' || r == ' ' || r == '\t' || r == '\n'
+	})
+	if len(parts) == 0 {
+		return nil, false
+	}
+	shape := make([]int64, 0, len(parts))
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		dim, err := strconv.ParseInt(part, 10, 64)
+		if err != nil {
+			return nil, false
+		}
+		shape = append(shape, dim)
+	}
+	return shape, len(shape) > 0
+}
+
+func toInt64(value interface{}) (int64, bool) {
+	switch v := value.(type) {
+	case int:
+		return int64(v), true
+	case int64:
+		return v, true
+	case int32:
+		return int64(v), true
+	case float64:
+		if math.IsNaN(v) || math.IsInf(v, 0) || math.Trunc(v) != v {
+			return 0, false
+		}
+		return int64(v), true
+	case float32:
+		f := float64(v)
+		if math.IsNaN(f) || math.IsInf(f, 0) || math.Trunc(f) != f {
+			return 0, false
+		}
+		return int64(f), true
+	case json.Number:
+		if i, err := v.Int64(); err == nil {
+			return i, true
+		}
+		f, err := v.Float64()
+		if err != nil || math.IsNaN(f) || math.IsInf(f, 0) || math.Trunc(f) != f {
+			return 0, false
+		}
+		if f > float64(maxTensorElements) {
+			return maxTensorElements + 1, true
+		}
+		return int64(f), true
+	case string:
+		s := strings.TrimSpace(v)
+		if s == "" {
+			return 0, false
+		}
+		if i, err := strconv.ParseInt(s, 10, 64); err == nil {
+			return i, true
+		}
+		f, err := strconv.ParseFloat(s, 64)
+		if err != nil || math.IsNaN(f) || math.IsInf(f, 0) || math.Trunc(f) != f {
+			return 0, false
+		}
+		if f > float64(maxTensorElements) {
+			return maxTensorElements + 1, true
+		}
+		return int64(f), true
+	default:
+		return 0, false
+	}
+}
+
+func toFloat64(value interface{}) (float64, bool) {
+	switch v := value.(type) {
+	case float64:
+		return v, true
+	case float32:
+		return float64(v), true
+	case int:
+		return float64(v), true
+	case int64:
+		return float64(v), true
+	case json.Number:
+		f, err := v.Float64()
+		return f, err == nil
+	case string:
+		f, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+		return f, err == nil
+	default:
+		return 0, false
+	}
 }
 
 func truncate(s string, maxLen int) string {
@@ -973,6 +1373,13 @@ func getDataPoisoningMitigations(alertType string) []string {
 			"Implement input validation and anomaly detection before model inference",
 			"Use adversarial training to improve model robustness",
 			"Monitor confidence distributions for signs of adversarial perturbation",
+		}
+	case "tensor_metadata_anomaly":
+		return []string{
+			"Reject inference requests with tensor rank or element counts above model limits",
+			"Validate sparse tensor metadata before allocation or deserialization",
+			"Route suspicious multimodal embeddings to quarantine instead of model buffers",
+			"Log source application and request metadata for follow-up triage",
 		}
 	case "model_tampering":
 		return []string{

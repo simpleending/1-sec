@@ -319,7 +319,9 @@ func CanonicalEventSchemas() []EventSchema {
 		{Type: "training_update", Category: "data_poisoning", RequiredKeys: []string{"dataset_id"}, OptionalKeys: []string{"hash", "change_percent", "record_count", "source"}, Description: "Training data update"},
 		{Type: "dataset_update", Category: "data_poisoning", RequiredKeys: []string{"dataset_id"}, OptionalKeys: []string{"hash", "change_percent", "record_count"}, Description: "Dataset update"},
 		{Type: "rag_retrieval", Category: "data_poisoning", RequiredKeys: []string{"query"}, OptionalKeys: []string{"retrieved_content", "sources"}, Description: "RAG retrieval for injection detection"},
-		{Type: "inference_result", Category: "data_poisoning", RequiredKeys: []string{"model_id"}, OptionalKeys: []string{"confidence", "input_hash"}, Description: "Model inference result for drift detection"},
+		{Type: "inference_result", Category: "data_poisoning", RequiredKeys: []string{"model_id"}, OptionalKeys: []string{"confidence", "input_hash", "tensor_shape", "embedding_shape", "tensor_elements", "embedding_elements", "sparsity_ratio", "body"}, Description: "Model inference result for drift and tensor metadata validation"},
+		{Type: "model_inference", Category: "data_poisoning", RequiredKeys: []string{"model_id"}, OptionalKeys: []string{"confidence", "input_hash", "tensor_shape", "embedding_shape", "tensor_elements", "embedding_elements", "sparsity_ratio", "body"}, Description: "Model inference request/result for drift and tensor metadata validation"},
+		{Type: "prediction", Category: "data_poisoning", RequiredKeys: []string{"model_id"}, OptionalKeys: []string{"confidence", "input_hash", "tensor_shape", "embedding_shape", "tensor_elements", "embedding_elements", "sparsity_ratio", "body"}, Description: "Prediction event for drift and tensor metadata validation"},
 		{Type: "model_update", Category: "data_poisoning", RequiredKeys: []string{"model_id"}, OptionalKeys: []string{"weight_hash", "expected_hash", "version", "source"}, Description: "Model weight update"},
 
 		// ── Quantum / Crypto ────────────────────────────────────────────
