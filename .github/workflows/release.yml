@@ -70,7 +70,7 @@ jobs:
             target: x86_64-apple-darwin
             artifact: 1sec-engine-darwin-amd64
             native: true
-          - os: macos-latest
+          - os: macos-15
             target: aarch64-apple-darwin
             artifact: 1sec-engine-darwin-arm64
             native: true
