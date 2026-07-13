@@ -1080,7 +1080,7 @@ func validateModelArtifactStructure(event *core.SecurityEvent) string {
 
 	switch {
 	case strings.HasSuffix(filename, ".safetensors"):
-		return validateSafeTensors(data)
+		return validateSafeTensors(data, len(event.RawData))
 	case strings.HasSuffix(filename, ".pkl"), strings.HasSuffix(filename, ".pickle"), strings.HasSuffix(filename, ".pt"):
 		return validatePickleLikeArtifact(data)
 	default:
@@ -1096,7 +1096,7 @@ func modelScanWindow(data []byte) []byte {
 	return data
 }
 
-func validateSafeTensors(data []byte) string {
+func validateSafeTensors(data []byte, artifactSize int) string {
 	if len(data) < 10 {
 		return "safetensors artifact is too small to contain a valid header"
 	}
@@ -1110,14 +1110,46 @@ func validateSafeTensors(data []byte) string {
 	if int(headerLen)+8 > len(data) {
 		return "safetensors header length exceeds available bytes in the inspected buffer"
 	}
-	header := strings.ToLower(string(data[8 : 8+headerLen]))
-	if !strings.HasPrefix(strings.TrimSpace(header), "{") || !strings.HasSuffix(strings.TrimSpace(header), "}") {
+	headerBytes := bytes.TrimSpace(data[8 : 8+headerLen])
+	header := strings.ToLower(string(headerBytes))
+	if !strings.HasPrefix(header, "{") || !strings.HasSuffix(header, "}") {
 		return "safetensors header is not valid JSON-like object data"
 	}
 	if strings.Contains(header, "__reduce__") || strings.Contains(header, "pickle") ||
 		strings.Contains(header, "os.system") || strings.Contains(header, "subprocess") ||
 		strings.Contains(header, "builtins.eval") {
 		return "safetensors metadata references pickle or execution primitives"
+	}
+
+	dec := json.NewDecoder(bytes.NewReader(headerBytes))
+	dec.UseNumber()
+	var entries map[string]interface{}
+	if err := dec.Decode(&entries); err != nil {
+		return "safetensors header is not valid JSON"
+	}
+	payloadSize := int64(artifactSize) - int64(8+headerLen)
+	for name, value := range entries {
+		if name == "__metadata__" {
+			continue
+		}
+		entry, ok := value.(map[string]interface{})
+		if !ok {
+			return fmt.Sprintf("safetensors tensor %q metadata is not an object", name)
+		}
+		shape, ok := firstShape(entry, "shape")
+		if !ok {
+			return fmt.Sprintf("safetensors tensor %q has no valid shape", name)
+		}
+		if finding := validateTensorMetadata(tensorMetadata{Source: name, Shape: shape}); finding != nil {
+			return fmt.Sprintf("safetensors tensor %q %s", name, finding.Reason)
+		}
+		offsets, ok := toInt64Slice(entry["data_offsets"])
+		if !ok || len(offsets) != 2 {
+			return fmt.Sprintf("safetensors tensor %q has invalid data offsets", name)
+		}
+		if offsets[0] < 0 || offsets[1] < offsets[0] || offsets[1] > payloadSize {
+			return fmt.Sprintf("safetensors tensor %q data offsets exceed artifact payload", name)
+		}
 	}
 	return ""
 }

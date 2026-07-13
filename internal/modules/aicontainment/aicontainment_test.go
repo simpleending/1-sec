@@ -644,6 +644,46 @@ func TestContainment_HandleEvent_AgentToolPayloadInjection(t *testing.T) {
 	}
 }
 
+func TestContainment_HandleEvent_UnsafeLocalURIHandler(t *testing.T) {
+	cp := makeCapturingPipeline()
+	c := startedModuleWithPipeline(t, cp)
+	defer c.Stop()
+
+	ev := core.NewSecurityEvent("test", "tool_call", core.SeverityInfo, "fetch local file")
+	ev.Details["agent_id"] = "agent-uri"
+	ev.Details["action"] = "summarize"
+	ev.Details["tool"] = "fetch_webpage"
+	ev.Details["arguments"] = map[string]interface{}{
+		"url": "file%3A%2F%2F%2Fworkspace%2Fconfig.json",
+	}
+
+	if err := c.HandleEvent(ev); err != nil {
+		t.Fatalf("HandleEvent() error: %v", err)
+	}
+	if !cp.hasAlertType("agent_unsafe_uri_handler") {
+		t.Fatalf("expected agent_unsafe_uri_handler alert; got %d alert(s)", cp.count())
+	}
+}
+
+func TestContainment_HandleEvent_AllowsHTTPSAgentURI(t *testing.T) {
+	cp := makeCapturingPipeline()
+	c := startedModuleWithPipeline(t, cp)
+	defer c.Stop()
+
+	ev := core.NewSecurityEvent("test", "tool_call", core.SeverityInfo, "fetch documentation")
+	ev.Details["agent_id"] = "agent-uri"
+	ev.Details["action"] = "summarize"
+	ev.Details["tool"] = "fetch_webpage"
+	ev.Details["arguments"] = map[string]interface{}{"url": "https://go.dev/doc/"}
+
+	if err := c.HandleEvent(ev); err != nil {
+		t.Fatalf("HandleEvent() error: %v", err)
+	}
+	if cp.hasAlertType("agent_unsafe_uri_handler") {
+		t.Fatal("did not expect agent_unsafe_uri_handler alert for HTTPS")
+	}
+}
+
 func TestContainment_HandleEvent_UnauthorizedMCPRouting(t *testing.T) {
 	cp := makeCapturingPipeline()
 	c := startedModuleWithPipeline(t, cp)

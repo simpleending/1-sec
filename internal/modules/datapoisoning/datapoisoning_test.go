@@ -3,6 +3,7 @@ package datapoisoning
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"sync"
 	"testing"
@@ -528,6 +529,76 @@ func TestGuard_HandleEvent_ModelDownload_InvalidSafeTensors(t *testing.T) {
 	if !cp.hasAlertType("model_artifact_structure") {
 		t.Error("expected model_artifact_structure alert for invalid safetensors header")
 	}
+}
+
+func TestGuard_HandleEvent_ModelDownload_SafeTensorsRankAnomaly(t *testing.T) {
+	cp := makeCapturingPipeline()
+	g := startedModuleWithPipeline(t, cp)
+	defer g.Stop()
+
+	header := `{"embedding":{"dtype":"F32","shape":[1,1,1,1,1,1,1,1,1],"data_offsets":[0,4]}}`
+	ev := core.NewSecurityEvent("test", "model_download", core.SeverityInfo, "model download")
+	ev.Details["model_name"] = "hostile-embedding"
+	ev.Details["registry"] = "huggingface"
+	ev.Details["signature"] = "sig"
+	ev.Details["artifact_name"] = "weights.safetensors"
+	ev.RawData = makeSafeTensorsArtifact(header, 4)
+
+	if err := g.HandleEvent(ev); err != nil {
+		t.Fatalf("HandleEvent() error: %v", err)
+	}
+	if !cp.hasAlertType("model_artifact_structure") {
+		t.Fatal("expected model_artifact_structure alert for rank-9 safetensors tensor")
+	}
+}
+
+func TestGuard_HandleEvent_ModelDownload_SafeTensorsOffsetsAnomaly(t *testing.T) {
+	cp := makeCapturingPipeline()
+	g := startedModuleWithPipeline(t, cp)
+	defer g.Stop()
+
+	header := `{"embedding":{"dtype":"F32","shape":[1],"data_offsets":[0,4096]}}`
+	ev := core.NewSecurityEvent("test", "model_download", core.SeverityInfo, "model download")
+	ev.Details["model_name"] = "truncated-embedding"
+	ev.Details["registry"] = "huggingface"
+	ev.Details["signature"] = "sig"
+	ev.Details["artifact_name"] = "weights.safetensors"
+	ev.RawData = makeSafeTensorsArtifact(header, 4)
+
+	if err := g.HandleEvent(ev); err != nil {
+		t.Fatalf("HandleEvent() error: %v", err)
+	}
+	if !cp.hasAlertType("model_artifact_structure") {
+		t.Fatal("expected model_artifact_structure alert for out-of-range safetensors offsets")
+	}
+}
+
+func TestGuard_HandleEvent_ModelDownload_ValidSafeTensors(t *testing.T) {
+	cp := makeCapturingPipeline()
+	g := startedModuleWithPipeline(t, cp)
+	defer g.Stop()
+
+	header := `{"embedding":{"dtype":"F32","shape":[1],"data_offsets":[0,4]}}`
+	ev := core.NewSecurityEvent("test", "model_download", core.SeverityInfo, "model download")
+	ev.Details["model_name"] = "clean-embedding"
+	ev.Details["registry"] = "huggingface"
+	ev.Details["signature"] = "sig"
+	ev.Details["artifact_name"] = "weights.safetensors"
+	ev.RawData = makeSafeTensorsArtifact(header, 4)
+
+	if err := g.HandleEvent(ev); err != nil {
+		t.Fatalf("HandleEvent() error: %v", err)
+	}
+	if cp.hasAlertType("model_artifact_structure") {
+		t.Fatal("did not expect model_artifact_structure alert for valid safetensors artifact")
+	}
+}
+
+func makeSafeTensorsArtifact(header string, payloadSize int) []byte {
+	artifact := make([]byte, 8+len(header)+payloadSize)
+	binary.LittleEndian.PutUint64(artifact[:8], uint64(len(header)))
+	copy(artifact[8:], header)
+	return artifact
 }
 
 func TestGuard_HandleEvent_ModelDownload_TruncatedPickle(t *testing.T) {

@@ -223,6 +223,27 @@ func TestCanonicalEventSchemas_ModelInferenceTensorMetadata(t *testing.T) {
 	}
 }
 
+func TestCanonicalEventSchemas_AgentToolArguments(t *testing.T) {
+	for _, eventType := range []string{"tool_call", "function_call", "agent_action"} {
+		schema, ok := EventSchemaMap()[eventType]
+		if !ok {
+			t.Fatalf("missing schema for %s", eventType)
+		}
+		for _, key := range []string{"arguments", "params", "payload", "url"} {
+			found := false
+			for _, optional := range schema.OptionalKeys {
+				if optional == key {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("%s schema missing optional key %q", eventType, key)
+			}
+		}
+	}
+}
+
 func TestCanonicalizeEventRouting_ValidTokensUnchanged(t *testing.T) {
 	ev := NewSecurityEvent("network_guardian", "dns_query", SeverityInfo, "dns")
 	CanonicalizeEventRouting(ev)

@@ -59,7 +59,20 @@ var (
 		`(?is)(?:curl|wget|powershell|/\w*bin/sh|\bbash\b|\bsh\b|nc\b|netcat|` +
 			`perl\b|python\d?\s+|ruby\b|chmod\b|chown\b|\brm\s+-|mkfifo)`,
 	)
+
+	agentToolURIRX = regexp.MustCompile(`(?i)[a-z][a-z0-9+.-]{1,31}:(?://)?[^\s"'<>]+`)
 )
+
+var unsafeAgentURISchemes = map[string]struct{}{
+	"dict":   {},
+	"expect": {},
+	"file":   {},
+	"gopher": {},
+	"jar":    {},
+	"local":  {},
+	"nfs":    {},
+	"smb":    {},
+}
 
 // Containment is the AI Agent Containment module providing action sandboxing,
 // tool-use monitoring, autonomous behavior detection, shadow AI detection,
@@ -302,7 +315,17 @@ func (c *Containment) handleAgentAction(event *core.SecurityEvent) {
 		}
 	}
 
-	if sev, reason, matched := classifyAgentToolPayloadInjection(collectStructuredToolStrings(event)...); matched {
+	toolPayloads := collectStructuredToolStrings(event)
+	if unsafeURI := findUnsafeAgentURI(append(toolPayloads, target)...); unsafeURI != "" {
+		c.raiseAlert(event, core.SeverityCritical,
+			"Unsafe Agent URI Handler Blocked",
+			fmt.Sprintf("Agent %s invoked tool %q with a local or non-HTTP URI handler (%s). "+
+				"URI handlers can expose workspace files or dispatch requests to local applications without normal web controls.",
+				agentID, tool, truncate(unsafeURI, 200)),
+			"agent_unsafe_uri_handler")
+	}
+
+	if sev, reason, matched := classifyAgentToolPayloadInjection(toolPayloads...); matched {
 		c.raiseAlert(event, sev,
 			"Suspicious Agent Tool Invocation Payload",
 			fmt.Sprintf("Agent %s invoked tool %q with arguments that resemble OS command "+
@@ -311,6 +334,29 @@ func (c *Containment) handleAgentAction(event *core.SecurityEvent) {
 				agentID, tool, reason),
 			"agent_tool_payload_injection")
 	}
+}
+
+func findUnsafeAgentURI(blobs ...string) string {
+	for _, blob := range blobs {
+		decoded := blob
+		for i := 0; i < 2; i++ {
+			unescaped, err := url.QueryUnescape(decoded)
+			if err != nil || unescaped == decoded {
+				break
+			}
+			decoded = unescaped
+		}
+		for _, candidate := range agentToolURIRX.FindAllString(decoded, 16) {
+			parsed, err := url.Parse(candidate)
+			if err != nil {
+				continue
+			}
+			if _, blocked := unsafeAgentURISchemes[strings.ToLower(parsed.Scheme)]; blocked {
+				return candidate
+			}
+		}
+	}
+	return ""
 }
 
 // classifyAgentToolPayloadInjection inspects blobs commonly carrying tool payloads.
@@ -986,6 +1032,13 @@ func getContainmentMitigations(alertType string) []string {
 			"Bind MCP server changes to authenticated admin workflows instead of free-form agent actions",
 			"Record and review every external MCP server URI an agent attempts to use",
 			"Terminate or pause agents that attempt to bypass approved MCP routing paths",
+		}
+	case "agent_unsafe_uri_handler":
+		return []string{
+			"Allow agent tools to fetch only explicitly approved HTTP and HTTPS destinations",
+			"Resolve workspace files through scoped file APIs instead of URI handlers",
+			"Require user approval before dispatching custom URI schemes to local applications",
+			"Record the complete tool invocation and investigate attempted local file access",
 		}
 	case "goal_hijack", "goal_external_influence":
 		return []string{

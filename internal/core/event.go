@@ -291,11 +291,11 @@ func CanonicalEventSchemas() []EventSchema {
 		{Type: "llm_input", Category: "ai", RequiredKeys: []string{"prompt"}, OptionalKeys: []string{"session_id", "user_id", "system_prompt", "context", "rag_context"}, Description: "LLM prompt input for injection/jailbreak scanning"},
 		{Type: "llm_output", Category: "ai", RequiredKeys: []string{"output"}, OptionalKeys: []string{"session_id"}, Description: "LLM output for data leakage scanning"},
 		{Type: "llm_token_usage", Category: "ai", RequiredKeys: []string{"user_id", "tokens_used"}, OptionalKeys: []string{}, Description: "LLM token budget tracking"},
-		{Type: "tool_call", Category: "ai", RequiredKeys: []string{"agent_id", "tool"}, OptionalKeys: []string{"target", "action"}, Description: "AI agent tool call"},
-		{Type: "function_call", Category: "ai", RequiredKeys: []string{"agent_id", "tool"}, OptionalKeys: []string{"target"}, Description: "AI agent function call"},
+		{Type: "tool_call", Category: "ai", RequiredKeys: []string{"agent_id", "tool"}, OptionalKeys: []string{"target", "action", "tool_args", "arguments", "args", "params", "payload", "input", "url"}, Description: "AI agent tool call"},
+		{Type: "function_call", Category: "ai", RequiredKeys: []string{"agent_id", "tool"}, OptionalKeys: []string{"target", "action", "tool_args", "arguments", "args", "params", "payload", "input", "url"}, Description: "AI agent function call"},
 
 		// ── AI Containment ──────────────────────────────────────────────
-		{Type: "agent_action", Category: "ai_containment", RequiredKeys: []string{"agent_id", "action"}, OptionalKeys: []string{"tool", "target"}, Description: "AI agent action for policy enforcement"},
+		{Type: "agent_action", Category: "ai_containment", RequiredKeys: []string{"agent_id", "action"}, OptionalKeys: []string{"tool", "target", "tool_args", "arguments", "args", "params", "payload", "input", "url"}, Description: "AI agent action for policy enforcement"},
 		{Type: "ai_api_call", Category: "ai_containment", RequiredKeys: []string{"endpoint"}, OptionalKeys: []string{"model", "user", "authorized"}, Description: "AI API call for shadow AI detection"},
 		{Type: "agent_spawn", Category: "ai_containment", RequiredKeys: []string{"agent_id"}, OptionalKeys: []string{"parent_id", "capabilities"}, Description: "AI agent spawned"},
 

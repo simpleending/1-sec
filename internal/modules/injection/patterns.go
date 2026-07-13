@@ -65,6 +65,12 @@ func compilePatterns() []Pattern {
 		{Name: "cmdi_nodejs_require", Category: "cmdi", Severity: core.SeverityHigh,
 			Regex: regexp.MustCompile(`(?i)require\s*\(\s*['"](fs|net|http|child_process|os|cluster|dgram|dns|tls|crypto)['"]\s*\)`)},
 
+		// CRLF metric injection: a user-controlled value starts a second StatsD-style
+		// metric line. Match both literal and percent-encoded line breaks because the
+		// analyzer deliberately scans the original input as well as its normalized form.
+		{Name: "crlf_metric_injection", Category: "metric", Severity: core.SeverityHigh,
+			Regex: regexp.MustCompile(`(?i)(?:%0d|%0a|\r|\n)+(?:[a-z0-9_.-]{1,128}):[-+]?[0-9]+(?:\.[0-9]+)?\|(?:c|g|ms|h|s|d)(?:\|[#@][^\r\n&\s]{1,128})?`)},
+
 		// SSRF patterns
 		{Name: "ssrf_internal_ip", Category: "ssrf", Severity: core.SeverityHigh,
 			Regex: regexp.MustCompile(`(?i)(https?://)?(127\.\d+\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+|192\.168\.\d+\.\d+|0\.0\.0\.0|localhost|0x7f|2130706433)`)},

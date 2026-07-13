@@ -119,7 +119,11 @@ func (s *Shield) analyzeEvent(event *core.SecurityEvent) {
 			fmt.Sprintf("Detected %d injection pattern(s) in field %q from IP %s. Categories: %s. Highest severity: %s.",
 				len(detections), fieldName, event.SourceIP, strings.Join(catList, ", "), maxSeverity.String()),
 		)
-		alert.Mitigations = getInjectionMitigations(catList)
+		rawCategories := make([]string, 0, len(categories))
+		for category := range categories {
+			rawCategories = append(rawCategories, category)
+		}
+		alert.Mitigations = getInjectionMitigations(rawCategories)
 
 		if s.pipeline != nil {
 			s.pipeline.Process(alert)
@@ -582,6 +586,8 @@ func categoryLabel(cat string) string {
 		return "Deserialization Attack"
 	case "canary":
 		return "Canary Token / Leaked Credential"
+	case "metric":
+		return "CRLF Metric Injection"
 	default:
 		return cat
 	}
@@ -733,6 +739,12 @@ func getInjectionMitigations(categories []string) []string {
 			"Investigate the source of the canary token trigger",
 			"Review access logs for the affected resource",
 			"Rotate any credentials associated with the triggered canary",
+		},
+		"metric": {
+			"Reject carriage returns and line feeds in metric names, values, and tags",
+			"Construct telemetry packets from typed fields instead of string concatenation",
+			"Allowlist metric names and StatsD value types before forwarding",
+			"Separate untrusted request data from backend telemetry channels",
 		},
 	}
 

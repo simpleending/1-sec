@@ -821,6 +821,37 @@ func TestFileSentinel_DeepRandomMZDoesNotTriggerPE(t *testing.T) {
 	}
 }
 
+func TestAnalyzeInput_CRLFMetricInjection(t *testing.T) {
+	shield := New()
+	shield.patterns = compilePatterns()
+
+	tests := []string{
+		"value=100%0Aevil_tag:1|c",
+		"value=100\r\nlatency.pwned:250|ms|#source:request",
+	}
+	for _, input := range tests {
+		detections := shield.AnalyzeInput(input, "query")
+		found := false
+		for _, detection := range detections {
+			if detection.PatternName == "crlf_metric_injection" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected CRLF metric injection detection for %q", input)
+		}
+	}
+}
+
+func TestAnalyzeInput_AllowsOrdinaryMetricText(t *testing.T) {
+	shield := New()
+	shield.patterns = compilePatterns()
+	if detections := shield.AnalyzeInput("metric=requests.total:1|c", "body"); len(detections) != 0 {
+		t.Fatalf("expected ordinary metric text to pass, got %#v", detections)
+	}
+}
+
 func testPNGBuffer(size int) []byte {
 	data := make([]byte, size)
 	copy(data, knownMagic["png"])
