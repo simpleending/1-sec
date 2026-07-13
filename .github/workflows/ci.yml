@@ -14,10 +14,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
 
@@ -33,10 +33,9 @@ jobs:
           staticcheck -checks='all,-U1000,-ST1000,-ST1005,-S1007,-S1009,-S1039,-SA1019,-SA5011' ./...
 
       - name: Gosec
-        continue-on-error: true
         run: |
           go install github.com/securego/gosec/v2/cmd/gosec@latest
-          gosec -exclude=G101 ./...
+          gosec -exclude=G101 -severity=high -confidence=medium -concurrency=4 ./cmd/... ./internal/...
 
       - name: Format check
         run: |
@@ -50,13 +49,11 @@ jobs:
         run: go test -race -timeout 120s ./...
 
       - name: Vulnerability check
-        continue-on-error: true
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...
 
       - name: OSV dependency scan
-        continue-on-error: true
         run: |
           go install github.com/google/osv-scanner/v2/cmd/osv-scanner@latest
           osv-scanner scan source -r .
@@ -65,7 +62,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y libpcap-dev
@@ -104,7 +101,6 @@ jobs:
         run: cargo test --all-features
 
       - name: Rust dependency audit
-        continue-on-error: true
         working-directory: rust/1sec-engine
         run: |
           cargo install cargo-audit --locked

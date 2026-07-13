@@ -176,6 +176,7 @@ func writeAIKeysToConfig(configPath string, keys []string) error {
 				content += fmt.Sprintf("        - %q\n", k)
 			}
 		}
+		// #nosec G703 -- --config intentionally selects the operator-owned destination.
 		return os.WriteFile(configPath, []byte(content), core.ConfigFileMode)
 	}
 
@@ -219,6 +220,7 @@ func writeAIKeysToConfig(configPath string, keys []string) error {
 	if err != nil {
 		return err
 	}
+	// #nosec G703 -- --config intentionally selects the operator-owned destination.
 	return os.WriteFile(configPath, out, core.ConfigFileMode)
 }
 

@@ -17,9 +17,16 @@ mod comprehensive_tests {
     use crate::events::{MatchResult, Severity};
     use crate::matcher::PatternMatcher;
     use crate::patterns::all_patterns;
+    use crate::{Cli, ENGINE_VERSION};
+    use clap::CommandFactory;
 
     fn matcher() -> PatternMatcher {
         PatternMatcher::new(&all_patterns(), 0.0, true)
+    }
+
+    #[test]
+    fn cli_reports_the_compiled_release_version() {
+        assert_eq!(Cli::command().get_version(), Some(ENGINE_VERSION));
     }
 
     fn matcher_no_ac() -> PatternMatcher {

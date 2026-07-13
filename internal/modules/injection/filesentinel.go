@@ -423,7 +423,7 @@ func (fs *FileSentinel) checkDOCXHeaderConsistency(data []byte) *FileFinding {
 	compressed := binary.LittleEndian.Uint32(data[18:22])
 	uncompressed := binary.LittleEndian.Uint32(data[22:26])
 	nameLen := int(binary.LittleEndian.Uint16(data[26:28]))
-	if compressed > uint32(len(data))*64 || uncompressed > uint32(len(data))*64 {
+	if advertisedSizeTooLarge(compressed, len(data)) || advertisedSizeTooLarge(uncompressed, len(data)) {
 		return &FileFinding{
 			Type:        "deep_header_anomaly",
 			Description: "DOCX ZIP local header advertises implausibly large entry sizes relative to the inspected buffer — possible archive parser exploit",
@@ -451,7 +451,7 @@ func (fs *FileSentinel) checkJP2HeaderConsistency(data []byte) *FileFinding {
 	if string(data[4:8]) != "jP  " {
 		return nil
 	}
-	if boxLen == 0 || boxLen > uint32(len(data))*64 {
+	if boxLen == 0 || advertisedSizeTooLarge(boxLen, len(data)) {
 		return &FileFinding{
 			Type:        "deep_header_anomaly",
 			Description: "JP2 signature box length is inconsistent with the inspected buffer — possible JPEG 2000 parser exploit",
@@ -459,6 +459,14 @@ func (fs *FileSentinel) checkJP2HeaderConsistency(data []byte) *FileFinding {
 		}
 	}
 	return nil
+}
+
+func advertisedSizeTooLarge(size uint32, inspectedLen int) bool {
+	if inspectedLen < 0 {
+		return true
+	}
+	// #nosec G115 -- inspectedLen is non-negative and originates from len(data).
+	return uint64(size) > uint64(inspectedLen)*64
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────

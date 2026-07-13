@@ -24,10 +24,15 @@ use tracing::info;
 #[cfg(feature = "pcap-capture")]
 use tracing::warn;
 
+const ENGINE_VERSION: &str = match option_env!("ONESEC_VERSION") {
+    Some(version) => version,
+    None => env!("CARGO_PKG_VERSION"),
+};
+
 #[derive(Parser, Debug)]
 #[command(
     name = "1sec-engine",
-    version,
+    version = ENGINE_VERSION,
     about = "1SEC high-performance security engine"
 )]
 struct Cli {
@@ -75,7 +80,7 @@ async fn main() -> Result<()> {
         tracing_subscriber::fmt().with_env_filter(env_filter).init();
     }
 
-    info!(version = env!("CARGO_PKG_VERSION"), "starting 1sec-engine");
+    info!(version = ENGINE_VERSION, "starting 1sec-engine");
 
     // Load config
     let cfg = config::EngineConfig::load(&cli.config)?;

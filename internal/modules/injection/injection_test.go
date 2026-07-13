@@ -762,6 +762,26 @@ func TestFileSentinel_CheckJP2HeaderConsistency(t *testing.T) {
 	}
 }
 
+func TestAdvertisedSizeTooLargeUsesWideArithmetic(t *testing.T) {
+	const inspectedLen = int(^uint32(0)/64) + 1
+	if advertisedSizeTooLarge(^uint32(0), inspectedLen) {
+		t.Fatal("wide ratio arithmetic must not wrap and falsely reject the size")
+	}
+	if advertisedSizeTooLarge(64, 1) {
+		t.Fatal("size equal to the ratio limit must be accepted")
+	}
+	if !advertisedSizeTooLarge(^uint32(0), 1) {
+		t.Fatal("maximum uint32 size must exceed a one-byte inspection ratio")
+	}
+}
+
+func TestDecodeHTMLEntitiesRejectsNonASCIIHexDigits(t *testing.T) {
+	const encoded = "&#x\u0130;"
+	if got := decodeHTMLEntities(encoded); got != encoded {
+		t.Fatalf("decodeHTMLEntities(%q) = %q", encoded, got)
+	}
+}
+
 // ─── Canary Token / Leaked Credential Detection ──────────────────────────────
 
 func TestFileSentinel_DeepEmbeddedExecutable(t *testing.T) {

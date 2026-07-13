@@ -16,10 +16,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
 
@@ -35,10 +35,9 @@ jobs:
           staticcheck -checks='all,-U1000,-ST1000,-ST1005,-S1007,-S1009,-S1039,-SA1019,-SA5011' ./...
 
       - name: Gosec
-        continue-on-error: true
         run: |
           go install github.com/securego/gosec/v2/cmd/gosec@latest
-          gosec -exclude=G101 ./...
+          gosec -exclude=G101 -severity=high -confidence=medium -concurrency=4 ./cmd/... ./internal/...
 
       - name: Test
         run: go test -race -timeout 120s ./...
@@ -62,22 +61,48 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
             artifact: 1sec-engine-linux-amd64
+            native: true
           - os: ubuntu-latest
             target: aarch64-unknown-linux-musl
             artifact: 1sec-engine-linux-arm64
+            native: false
           - os: macos-15-intel
             target: x86_64-apple-darwin
             artifact: 1sec-engine-darwin-amd64
+            native: true
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact: 1sec-engine-darwin-arm64
+            native: true
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact: 1sec-engine-windows-amd64.exe
+            native: true
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+            artifact: 1sec-engine-windows-arm64.exe
+            native: false
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+
+      - name: Configure MSVC cross tools (Windows ARM64)
+        if: matrix.target == 'aarch64-pc-windows-msvc'
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $installPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.ARM64 -property installationPath
+          if (-not $installPath) {
+            throw 'Visual Studio ARM64 build tools are not installed'
+          }
+          $devCmd = Join-Path $installPath 'Common7\Tools\VsDevCmd.bat'
+          $environment = & $env:COMSPEC /d /s /c "`"$devCmd`" -arch=arm64 -host_arch=amd64 >nul && set"
+          foreach ($line in $environment) {
+            if ($line -match '^([^=][^=]*)=(.*)$') {
+              "$($matches[1])=$($matches[2])" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            }
+          }
 
       - name: Install musl tools (Linux)
         if: runner.os == 'Linux'
@@ -107,10 +132,12 @@ jobs:
 
       - name: Build Rust engine
         working-directory: rust/1sec-engine
+        env:
+          ONESEC_VERSION: ${{ github.ref_name }}
         run: cargo build --release --no-default-features --target ${{ matrix.target }}
 
       - name: Test (native targets only)
-        if: matrix.target != 'aarch64-unknown-linux-musl'
+        if: matrix.native
         working-directory: rust/1sec-engine
         run: cargo test --no-default-features --target ${{ matrix.target }}
 
@@ -140,12 +167,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
 
@@ -180,6 +207,7 @@ jobs:
           cp rust-artifacts/1sec-engine-darwin-amd64/1sec-engine-darwin-amd64 upload/
           cp rust-artifacts/1sec-engine-darwin-arm64/1sec-engine-darwin-arm64 upload/
           cp rust-artifacts/1sec-engine-windows-amd64.exe/1sec-engine-windows-amd64.exe upload/
+          cp rust-artifacts/1sec-engine-windows-arm64.exe/1sec-engine-windows-arm64.exe upload/
           cd upload && sha256sum * > rust-checksums.txt
 
       - name: Sign Rust checksums

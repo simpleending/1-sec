@@ -224,6 +224,7 @@ func decodeURLPercent(s string) string {
 			hi := unhex(s[i+1])
 			lo := unhex(s[i+2])
 			if hi >= 0 && lo >= 0 {
+				// #nosec G115 -- both nibbles are validated to the range 0..15.
 				b.WriteByte(byte(hi<<4 | lo))
 				i += 3
 				continue
@@ -281,6 +282,11 @@ func decodeHTMLEntities(s string) string {
 				if len(numStr) > 0 && (numStr[0] == 'x' || numStr[0] == 'X') {
 					// Hex: &#x3C;
 					for _, c := range numStr[1:] {
+						if c > 0x7f {
+							val = -1
+							break
+						}
+						// #nosec G115 -- c is explicitly restricted to ASCII above.
 						h := unhex(byte(c))
 						if h < 0 {
 							val = -1
@@ -326,6 +332,7 @@ func decodeBackslashEscapes(s string) string {
 					hi := unhex(s[i+2])
 					lo := unhex(s[i+3])
 					if hi >= 0 && lo >= 0 {
+						// #nosec G115 -- both nibbles are validated to the range 0..15.
 						b.WriteByte(byte(hi<<4 | lo))
 						i += 4
 						continue
@@ -345,6 +352,7 @@ func decodeBackslashEscapes(s string) string {
 						val = val*16 + h
 					}
 					if valid && val < 128 {
+						// #nosec G115 -- the explicit bound guarantees an ASCII byte.
 						b.WriteByte(byte(val))
 						i += 6
 						continue
@@ -367,6 +375,7 @@ func decodeBackslashEscapes(s string) string {
 				if i+3 < len(s) && s[i+2] >= '0' && s[i+2] <= '7' && s[i+3] >= '0' && s[i+3] <= '7' {
 					val := int(s[i+1]-'0')*64 + int(s[i+2]-'0')*8 + int(s[i+3]-'0')
 					if val < 128 {
+						// #nosec G115 -- the octal digits and bound guarantee an ASCII byte.
 						b.WriteByte(byte(val))
 						i += 4
 						continue

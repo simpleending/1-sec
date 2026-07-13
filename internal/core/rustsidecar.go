@@ -142,6 +142,7 @@ func (rs *RustSidecar) supervise(ctx context.Context, binary, configPath string)
 				backoff = 60 * time.Second
 			}
 			// Add jitter (±25%) to prevent thundering herd on multi-instance deployments
+			// #nosec G404 -- retry timing is not a security-sensitive random value.
 			jitter := time.Duration(rand.Int63n(int64(backoff/4)+1)) - backoff/8
 			backoff += jitter
 			rs.logger.Warn().

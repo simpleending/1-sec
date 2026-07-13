@@ -80,6 +80,7 @@ func findExecutable(name string) (string, error) {
 	}
 	for _, dir := range strings.Split(pathEnv, sep) {
 		full := dir + string(os.PathSeparator) + name
+		// #nosec G703 -- name is a fixed executable basename and dir comes from PATH.
 		if fi, err := os.Stat(full); err == nil && !fi.IsDir() {
 			return full, nil
 		}

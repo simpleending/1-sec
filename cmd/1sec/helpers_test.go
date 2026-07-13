@@ -8,6 +8,24 @@ import (
 	"testing"
 )
 
+func TestProfilePathValidation(t *testing.T) {
+	for _, name := range []string{"default", "prod-us_2", "A1"} {
+		path, err := profilePath(name)
+		if err != nil {
+			t.Fatalf("profilePath(%q) returned error: %v", name, err)
+		}
+		if !strings.HasSuffix(path, name+".yaml") {
+			t.Fatalf("profilePath(%q) = %q", name, path)
+		}
+	}
+
+	for _, name := range []string{"", "../escape", "a/b", `a\b`, "has space", "profile.yaml", "prod;rm"} {
+		if _, err := profilePath(name); err == nil {
+			t.Errorf("profilePath(%q) unexpectedly succeeded", name)
+		}
+	}
+}
+
 // ─── suggest ──────────────────────────────────────────────────────────────────
 
 func TestSuggest_PrefixMatch(t *testing.T) {

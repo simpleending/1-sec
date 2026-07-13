@@ -645,9 +645,14 @@ func pcmToFloat64(data []byte) []float64 {
 	numSamples := len(data) / 2
 	samples := make([]float64, numSamples)
 	for i := 0; i < numSamples; i++ {
-		samples[i] = float64(int16(binary.LittleEndian.Uint16(data[i*2 : i*2+2])))
+		samples[i] = float64(decodePCM16(data[i*2 : i*2+2]))
 	}
 	return samples
+}
+
+func decodePCM16(data []byte) int16 {
+	// #nosec G115 -- PCM16 uses two's-complement bit reinterpretation by definition.
+	return int16(binary.LittleEndian.Uint16(data))
 }
 
 func mean(vals []float64) float64 {
@@ -786,7 +791,7 @@ func silenceRatio(data []byte) float64 {
 	threshold := 500.0
 
 	for i := 0; i < numSamples; i++ {
-		sample := math.Abs(float64(int16(binary.LittleEndian.Uint16(data[i*2 : i*2+2]))))
+		sample := math.Abs(float64(decodePCM16(data[i*2 : i*2+2])))
 		if sample < threshold {
 			silentCount++
 		}
@@ -803,9 +808,9 @@ func zeroCrossingRate(data []byte) float64 {
 	}
 
 	crossings := 0
-	prevSample := int16(binary.LittleEndian.Uint16(data[0:2]))
+	prevSample := decodePCM16(data[0:2])
 	for i := 1; i < numSamples; i++ {
-		sample := int16(binary.LittleEndian.Uint16(data[i*2 : i*2+2]))
+		sample := decodePCM16(data[i*2 : i*2+2])
 		if (prevSample >= 0 && sample < 0) || (prevSample < 0 && sample >= 0) {
 			crossings++
 		}
@@ -1803,10 +1808,14 @@ func decodePunycodePart(input string) string {
 		bias = punycodeAdapt(i-oldi, outLen, oldi == 0)
 		n += i / outLen
 		i = i % outLen
+		if n > unicode.MaxRune || (n >= 0xD800 && n <= 0xDFFF) {
+			return ""
+		}
 
 		// Insert character at position i
 		newOutput := make([]rune, len(output)+1)
 		copy(newOutput, output[:i])
+		// #nosec G115 -- n is constrained to valid Unicode scalar values above.
 		newOutput[i] = rune(n)
 		copy(newOutput[i+1:], output[i:])
 		output = newOutput

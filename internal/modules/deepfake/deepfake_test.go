@@ -770,6 +770,13 @@ func TestDecodePunycodePart(t *testing.T) {
 	_ = result
 }
 
+func TestDecodePunycodePartRejectsOutOfRangeCodePoint(t *testing.T) {
+	// A long digit sequence must fail closed instead of wrapping into a rune.
+	if got := decodePunycodePart("zzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"); got != "" {
+		t.Fatalf("expected invalid Punycode to be rejected, got %q", got)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Reply-chain verification tests
 // ---------------------------------------------------------------------------

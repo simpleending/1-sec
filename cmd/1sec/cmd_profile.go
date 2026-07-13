@@ -37,9 +37,18 @@ func profileDir() string {
 	return filepath.Join(home, ".1sec", "profiles")
 }
 
-// profilePath returns the full path for a named profile.
-func profilePath(name string) string {
-	return filepath.Join(profileDir(), name+".yaml")
+// profilePath returns a contained path for a validated profile name.
+func profilePath(name string) (string, error) {
+	if name == "" {
+		return "", fmt.Errorf("profile name must not be empty")
+	}
+	for _, r := range name {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || r == '-' || r == '_') {
+			return "", fmt.Errorf("profile name %q may contain only letters, numbers, hyphens, and underscores", name)
+		}
+	}
+	return filepath.Join(profileDir(), name+".yaml"), nil
 }
 
 // resolveProfile returns the config path for a given profile name.
@@ -52,7 +61,11 @@ func resolveProfile(profileName, configPath string) string {
 		return configPath
 	}
 
-	pp := profilePath(profileName)
+	pp, err := profilePath(profileName)
+	if err != nil {
+		warnf("invalid profile name %q, falling back to %s", profileName, configPath)
+		return configPath
+	}
 	if _, err := os.Stat(pp); err != nil {
 		warnf("profile %q not found at %s, falling back to %s", profileName, pp, configPath)
 		return configPath
@@ -144,12 +157,10 @@ func cmdProfileCreate(args []string) {
 	}
 	name := remaining[0]
 
-	// Validate name
-	if strings.ContainsAny(name, "/\\. ") {
-		errorf("profile name must not contain slashes, dots, or spaces")
+	pp, err := profilePath(name)
+	if err != nil {
+		errorf("%v", err)
 	}
-
-	pp := profilePath(name)
 	if _, err := os.Stat(pp); err == nil {
 		errorf("profile %q already exists at %s", name, pp)
 	}
@@ -179,6 +190,7 @@ func cmdProfileCreate(args []string) {
 	}
 	header += "#\n"
 
+	// #nosec G703 -- pp is contained by profilePath's strict basename validation.
 	if err := os.WriteFile(pp, []byte(header+content), 0644); err != nil {
 		errorf("writing profile: %v", err)
 	}
@@ -198,7 +210,10 @@ func cmdProfileShow(args []string) {
 	}
 	name := remaining[0]
 
-	pp := profilePath(name)
+	pp, err := profilePath(name)
+	if err != nil {
+		errorf("%v", err)
+	}
 	if _, err := os.Stat(pp); err != nil {
 		errorf("profile %q not found", name)
 	}
@@ -241,7 +256,10 @@ func cmdProfileDelete(args []string) {
 	}
 	name := args[0]
 
-	pp := profilePath(name)
+	pp, err := profilePath(name)
+	if err != nil {
+		errorf("%v", err)
+	}
 	if _, err := os.Stat(pp); err != nil {
 		errorf("profile %q not found", name)
 	}
@@ -259,7 +277,10 @@ func cmdProfileUse(args []string) {
 	}
 	name := args[0]
 
-	pp := profilePath(name)
+	pp, err := profilePath(name)
+	if err != nil {
+		errorf("%v", err)
+	}
 	if _, err := os.Stat(pp); err != nil {
 		errorf("profile %q not found — create it first with: 1sec profile create %s", name, name)
 	}
