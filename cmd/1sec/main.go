@@ -11,19 +11,19 @@ package main
 import (
 	"fmt"
 	"os"
+
+	"github.com/1sec-project/1sec/internal/core"
 )
 
 var (
-	version   = "0.4.16"
+	version   = "0.4.21"
 	commit    = "dev"
 	buildDate = "unknown"
 )
 
 func main() {
-	// Check for updates on every launch (non-blocking, skips if checked recently).
-	// Disable with ONESEC_NO_UPDATE=1.
-	quiet := hasFlag(os.Args, "-q", "--quiet")
-	selfUpdate(version, quiet)
+	// Keep every runtime surface aligned with the ldflag-injected CLI version.
+	core.Version = version
 
 	if len(os.Args) >= 2 {
 		switch os.Args[1] {
@@ -44,6 +44,11 @@ func main() {
 		printUsage(os.Stdout)
 		os.Exit(0)
 	}
+
+	// Check for updates on operational commands only. Read-only version/help
+	// invocations must not replace the running binary as a side effect.
+	quiet := hasFlag(os.Args, "-q", "--quiet")
+	selfUpdate(version, quiet)
 
 	subcmd := os.Args[1]
 	args := os.Args[2:]

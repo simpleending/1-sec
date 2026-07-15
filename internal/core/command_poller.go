@@ -158,7 +158,7 @@ func (cp *CommandPoller) poll() {
 }
 
 func (cp *CommandPoller) fetchPendingCommands() ([]CloudCommand, error) {
-	url := cp.cfg.Cloud.APIURL + "/commands?status=pending"
+	url := strings.TrimRight(cp.cfg.Cloud.APIURL, "/") + "/commands?status=pending"
 	req, err := newAuthRequest("GET", url, nil, cp.cfg.Cloud.APIKey)
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
@@ -200,7 +200,7 @@ func (cp *CommandPoller) ackCommand(cmdID, status, result, errMsg string) error 
 		return err
 	}
 
-	url := cp.cfg.Cloud.APIURL + "/commands"
+	url := strings.TrimRight(cp.cfg.Cloud.APIURL, "/") + "/commands"
 	req, err := newAuthRequest("PATCH", url, body, cp.cfg.Cloud.APIKey)
 	if err != nil {
 		return err

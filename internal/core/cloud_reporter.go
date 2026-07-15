@@ -97,8 +97,8 @@ func NewCloudReporter(engine *Engine) *CloudReporter {
 
 	// Hook into the alert pipeline to capture correlation alerts for cloud reporting
 	engine.Pipeline.AddHandler(func(alert *Alert) {
-		if chainName, ok := alert.Metadata["chain_name"]; ok {
-			go cr.reportCorrelation(alert, chainName.(string))
+		if chainName, ok := alert.Metadata["chain_name"].(string); ok && chainName != "" {
+			go cr.reportCorrelation(alert, chainName)
 		}
 	})
 
@@ -183,7 +183,7 @@ func (cr *CloudReporter) sendHeartbeat() {
 	hb := CloudHeartbeat{
 		InstanceID:        fmt.Sprintf("i-%s-%s", hostname, runtime.GOARCH),
 		Hostname:          hostname,
-		Version:           "1.0.0",
+		Version:           Version,
 		Uptime:            int64(time.Since(cr.engine.startTime).Seconds()),
 		Timestamp:         time.Now().UTC().Format(time.RFC3339),
 		ModulesActive:     modulesActive,
@@ -231,7 +231,6 @@ func (cr *CloudReporter) enforcementReporter() {
 				if sent[r.ID] {
 					continue
 				}
-				sent[r.ID] = true
 				newRecords = append(newRecords, r)
 			}
 			if len(newRecords) == 0 {
@@ -288,6 +287,10 @@ func (cr *CloudReporter) enforcementReporter() {
 
 			if err := cr.postIngest(payload); err != nil {
 				cr.logger.Debug().Err(err).Msg("enforcement report failed")
+				continue
+			}
+			for _, r := range newRecords {
+				sent[r.ID] = true
 			}
 		}
 	}
@@ -326,7 +329,7 @@ func (cr *CloudReporter) postIngest(payload interface{}) error {
 		return fmt.Errorf("marshaling payload: %w", err)
 	}
 
-	url := cr.cfg.Cloud.APIURL + "/ingest"
+	url := strings.TrimRight(cr.cfg.Cloud.APIURL, "/") + "/ingest"
 	req, err := newAuthRequest("POST", url, body, cr.cfg.Cloud.APIKey)
 	if err != nil {
 		return fmt.Errorf("creating request: %w", err)

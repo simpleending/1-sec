@@ -252,7 +252,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"version":       "1.0.0",
+		"version":       core.Version,
 		"status":        "running",
 		"uptime_secs":   int64(s.engine.Uptime().Seconds()),
 		"bus_connected": s.engine.Bus != nil && s.engine.Bus.IsConnected(),
@@ -647,7 +647,7 @@ func (s *Server) handleEventSchemas(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"version": "1.0.0",
+		"version": core.Version,
 		"schemas": schemas,
 		"total":   len(schemas),
 	})
