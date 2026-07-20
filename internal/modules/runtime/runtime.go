@@ -491,7 +491,7 @@ func (w *Watcher) handleFirmwareEvent(event *core.SecurityEvent) {
 var byovdBlocklist = []string{
 	"huaweidriver.sys", "rtcore64.sys", "gdrv.sys", "procexp152.sys", "nal.sys",
 	"dbutil_2_3.sys", "asio64.sys", "mhyprot2.sys", "kprocesshacker.sys",
-	"viragt64.sys", "aswarpot.sys", "iomem64.sys", "zemana.sys",
+	"viragt64.sys", "aswarpot.sys", "iomem64.sys", "zemana.sys", "qmudisk64.sys",
 }
 
 // handleDriverLoad detects BYOVD attacks where threat actors load known-vulnerable

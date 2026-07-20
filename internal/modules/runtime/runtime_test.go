@@ -1143,7 +1143,7 @@ func TestHandleDriverLoad_BlockedDriver(t *testing.T) {
 	cp := makeCapturingPipeline()
 	w := startedModuleWithPipeline(t, cp)
 
-	for _, driver := range []string{"rtcore64.sys", "procexp152.sys", "huaweidriver.sys", "gdrv.sys", "nal.sys"} {
+	for _, driver := range []string{"rtcore64.sys", "procexp152.sys", "huaweidriver.sys", "gdrv.sys", "nal.sys", "qmudisk64.sys"} {
 		cp.mu.Lock()
 		cp.alerts = nil
 		cp.mu.Unlock()

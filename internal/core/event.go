@@ -316,8 +316,8 @@ func CanonicalEventSchemas() []EventSchema {
 		{Type: "connected_account_usage", Category: "token_vault", RequiredKeys: []string{"user_id", "connection"}, OptionalKeys: []string{"agent_id", "action", "scopes"}, Description: "Connected account token used by an agent or application"},
 
 		// ── Data Poisoning ──────────────────────────────────────────────
-		{Type: "training_update", Category: "data_poisoning", RequiredKeys: []string{"dataset_id"}, OptionalKeys: []string{"hash", "change_percent", "record_count", "source"}, Description: "Training data update"},
-		{Type: "dataset_update", Category: "data_poisoning", RequiredKeys: []string{"dataset_id"}, OptionalKeys: []string{"hash", "change_percent", "record_count"}, Description: "Dataset update"},
+		{Type: "training_update", Category: "data_poisoning", RequiredKeys: []string{"dataset_id"}, OptionalKeys: []string{"hash", "change_percent", "record_count", "source", "dataset_config", "loader_config", "config", "content"}, Description: "Training data update"},
+		{Type: "dataset_update", Category: "data_poisoning", RequiredKeys: []string{"dataset_id"}, OptionalKeys: []string{"hash", "change_percent", "record_count", "source", "dataset_config", "loader_config", "config", "content"}, Description: "Dataset update"},
 		{Type: "rag_retrieval", Category: "data_poisoning", RequiredKeys: []string{"query"}, OptionalKeys: []string{"retrieved_content", "sources"}, Description: "RAG retrieval for injection detection"},
 		{Type: "inference_result", Category: "data_poisoning", RequiredKeys: []string{"model_id"}, OptionalKeys: []string{"confidence", "input_hash", "tensor_shape", "embedding_shape", "tensor_elements", "embedding_elements", "sparsity_ratio", "body"}, Description: "Model inference result for drift and tensor metadata validation"},
 		{Type: "model_inference", Category: "data_poisoning", RequiredKeys: []string{"model_id"}, OptionalKeys: []string{"confidence", "input_hash", "tensor_shape", "embedding_shape", "tensor_elements", "embedding_elements", "sparsity_ratio", "body"}, Description: "Model inference request/result for drift and tensor metadata validation"},

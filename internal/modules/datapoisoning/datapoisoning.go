@@ -22,10 +22,16 @@ import (
 const ModuleName = "data_poisoning"
 
 const (
-	maxTensorRank      = 8
-	maxTensorElements  = int64(100_000_000)
-	maxSparsityRatio   = 0.99
-	maxTensorJSONBytes = 256 * 1024
+	maxTensorRank         = 8
+	maxTensorElements     = int64(100_000_000)
+	maxSparsityRatio      = 0.99
+	maxTensorJSONBytes    = 256 * 1024
+	maxDatasetConfigBytes = 256 * 1024
+)
+
+var (
+	datasetTemplateExecPattern = regexp.MustCompile(`(?is)(?:\{\{|\{%|<%)[\s\S]{0,1000}?(?:__import__\s*\(|os\s*\.\s*system|subprocess(?:\s*\.|\s*\()|eval\s*\(|exec\s*\(|pty\s*\.\s*spawn|popen\s*\()`)
+	remoteDatasetLoaderPattern = regexp.MustCompile(`(?i)(?:trust_remote_code|allow_remote_code|remote_code)\s*["']?\s*[:=]\s*["']?(?:true|1|yes)|load_dataset\s*\([^\n]{0,512}trust_remote_code\s*=\s*true`)
 )
 
 // Guard is the Data Poisoning Guard module providing training data integrity,
@@ -86,7 +92,7 @@ func (g *Guard) Stop() error {
 
 func (g *Guard) HandleEvent(event *core.SecurityEvent) error {
 	switch event.Type {
-	case "training_data_update", "dataset_change", "data_ingestion":
+	case "training_update", "training_data_update", "dataset_update", "dataset_change", "data_ingestion":
 		g.handleDataUpdate(event)
 	case "rag_query", "rag_retrieval", "context_injection":
 		g.handleRAGEvent(event)
@@ -113,6 +119,18 @@ func (g *Guard) handleDataUpdate(event *core.SecurityEvent) {
 		return
 	}
 
+	if finding, critical := detectDatasetConfigExecution(event); finding != "" {
+		severity := core.SeverityHigh
+		if critical {
+			severity = core.SeverityCritical
+		}
+		g.raiseAlert(event, severity,
+			"Executable Dataset Configuration Detected",
+			fmt.Sprintf("Dataset %s contains an unsafe executable configuration: %s. Reject remote loader code and render dataset metadata as inert data.",
+				datasetID, finding),
+			"dataset_config_execution")
+	}
+
 	result := g.dataTracker.RecordUpdate(datasetID, source, hash, recordCount, changePercent)
 
 	if result.IntegrityViolation {
@@ -137,6 +155,33 @@ func (g *Guard) handleDataUpdate(event *core.SecurityEvent) {
 			fmt.Sprintf("Dataset %s updated from untrusted source: %s", datasetID, source),
 			"untrusted_data_source")
 	}
+}
+
+func detectDatasetConfigExecution(event *core.SecurityEvent) (string, bool) {
+	parts := []string{
+		getStringDetail(event, "dataset_config"),
+		getStringDetail(event, "loader_config"),
+		getStringDetail(event, "config"),
+		getStringDetail(event, "content"),
+	}
+	if len(event.RawData) > 0 {
+		limit := len(event.RawData)
+		if limit > maxDatasetConfigBytes {
+			limit = maxDatasetConfigBytes
+		}
+		parts = append(parts, string(event.RawData[:limit]))
+	}
+	config := strings.Join(parts, "\n")
+	if len(config) > maxDatasetConfigBytes {
+		config = config[:maxDatasetConfigBytes]
+	}
+	if datasetTemplateExecPattern.MatchString(config) {
+		return "template expression reaches a Python or process-execution primitive", true
+	}
+	if remoteDatasetLoaderPattern.MatchString(config) {
+		return "remote dataset loader code execution is enabled", false
+	}
+	return "", false
 }
 
 func (g *Guard) handleRAGEvent(event *core.SecurityEvent) {

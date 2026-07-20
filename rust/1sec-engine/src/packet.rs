@@ -28,6 +28,8 @@ const STATS_INTERVAL_SECS: u64 = 60;
 const SSH_MAX_PAYLOAD_SIZE: usize = 262_144;
 const SSH_MAX_CHANNEL_OPENS_PER_SEC: usize = 50;
 const SSH_TRACKER_WINDOW_SECS: u64 = 1;
+const WEBSOCKET_MAX_FRAME_PAYLOAD: u64 = 16 * 1024 * 1024;
+const WEBSOCKET_FLOW_TTL_SECS: u64 = 3600;
 
 /// Per-source tracking for anomaly detection.
 struct SourceTracker {
@@ -161,6 +163,130 @@ fn is_ssh_channel_open_payload(payload: &[u8]) -> bool {
     false
 }
 
+/// Tracks plaintext WebSocket upgrade requests so binary payloads are only
+/// interpreted as RFC 6455 frames on confirmed client-to-server flows.
+struct WebSocketTracker {
+    flows: std::collections::HashMap<String, std::time::Instant>,
+    last_prune: std::time::Instant,
+}
+
+impl WebSocketTracker {
+    fn new() -> Self {
+        Self {
+            flows: std::collections::HashMap::new(),
+            last_prune: std::time::Instant::now(),
+        }
+    }
+
+    fn flow_key(src_ip: &str, src_port: u16, dst_ip: &str, dst_port: u16) -> String {
+        format!("{}:{}:{}:{}", src_ip, src_port, dst_ip, dst_port)
+    }
+
+    fn track(
+        &mut self,
+        src_ip: &str,
+        src_port: u16,
+        dst_ip: &str,
+        dst_port: u16,
+        payload: &[u8],
+    ) -> Vec<String> {
+        let now = std::time::Instant::now();
+        if self.last_prune.elapsed().as_secs() >= STATS_INTERVAL_SECS {
+            let cutoff = now - std::time::Duration::from_secs(WEBSOCKET_FLOW_TTL_SECS);
+            self.flows.retain(|_, last_seen| *last_seen >= cutoff);
+            self.last_prune = now;
+        }
+
+        let key = Self::flow_key(src_ip, src_port, dst_ip, dst_port);
+        if is_websocket_upgrade_request(payload) {
+            self.flows.insert(key, now);
+            return Vec::new();
+        }
+        let Some(last_seen) = self.flows.get_mut(&key) else {
+            return Vec::new();
+        };
+        *last_seen = now;
+
+        validate_websocket_client_frame(payload)
+            .into_iter()
+            .map(|reason| format!("websocket_invalid_frame: flow {key} {reason}"))
+            .collect()
+    }
+}
+
+fn is_websocket_upgrade_request(payload: &[u8]) -> bool {
+    let preview_len = payload.len().min(4096);
+    let Ok(text) = std::str::from_utf8(&payload[..preview_len]) else {
+        return false;
+    };
+    let lower = text.to_ascii_lowercase();
+    lower.contains("upgrade: websocket") && lower.contains("connection: upgrade")
+}
+
+fn validate_websocket_client_frame(payload: &[u8]) -> Option<String> {
+    if payload.len() < 2 {
+        return None;
+    }
+
+    let first = payload[0];
+    let second = payload[1];
+    let fin = first & 0x80 != 0;
+    let reserved = first & 0x70;
+    let opcode = first & 0x0f;
+    let masked = second & 0x80 != 0;
+    let length_code = second & 0x7f;
+
+    if reserved != 0 {
+        return Some(format!("sets reserved bits 0x{reserved:02x}"));
+    }
+    if !matches!(opcode, 0x0 | 0x1 | 0x2 | 0x8 | 0x9 | 0xa) {
+        return Some(format!("uses reserved opcode 0x{opcode:x}"));
+    }
+    if !masked {
+        return Some("client frame is not masked".to_string());
+    }
+
+    let payload_len = match length_code {
+        0..=125 => u64::from(length_code),
+        126 => {
+            if payload.len() < 4 {
+                return None;
+            }
+            let length = u64::from(u16::from_be_bytes([payload[2], payload[3]]));
+            if length < 126 {
+                return Some(format!("uses non-canonical 16-bit length {length}"));
+            }
+            length
+        }
+        127 => {
+            if payload.len() < 10 {
+                return None;
+            }
+            if payload[2] & 0x80 != 0 {
+                return Some("sets the forbidden high bit in a 64-bit length".to_string());
+            }
+            let length = u64::from_be_bytes(payload[2..10].try_into().expect("length checked"));
+            if length < 65_536 {
+                return Some(format!("uses non-canonical 64-bit length {length}"));
+            }
+            length
+        }
+        _ => unreachable!(),
+    };
+
+    if opcode >= 0x8 && (!fin || payload_len > 125) {
+        return Some(format!(
+            "uses invalid control-frame fragmentation or length {payload_len}"
+        ));
+    }
+    if payload_len > WEBSOCKET_MAX_FRAME_PAYLOAD {
+        return Some(format!(
+            "claims {payload_len} bytes (limit: {WEBSOCKET_MAX_FRAME_PAYLOAD})"
+        ));
+    }
+    None
+}
+
 /// Main packet capture loop. Runs until an error occurs or the process is killed.
 #[cfg(feature = "pcap-capture")]
 pub async fn capture_loop(
@@ -185,6 +311,7 @@ pub async fn capture_loop(
 
     let mut tracker = SourceTracker::new();
     let mut ssh_tracker = SSHTracker::new();
+    let mut websocket_tracker = WebSocketTracker::new();
     let mut total_packets: u64 = 0;
     let mut published_events: u64 = 0;
     let stats_start = std::time::Instant::now();
@@ -328,6 +455,14 @@ pub async fn capture_loop(
             _ => Vec::new(),
         };
         anomalies.extend(ssh_anomalies);
+
+        let websocket_anomalies = match &parsed.transport {
+            Some(TransportSlice::Tcp(tcp)) => {
+                websocket_tracker.track(&src_ip, src_port, &dst_ip, dst_port, tcp.payload())
+            }
+            _ => Vec::new(),
+        };
+        anomalies.extend(websocket_anomalies);
 
         // Deep-buffer binary signature scan for large payloads (>2KB)
         if payload_len > MAX_PAYLOAD_PREVIEW {
@@ -844,6 +979,49 @@ mod packet_util_tests {
             anomalies.iter().any(|a| a.contains("ssh_oversized_frame")),
             "expected oversized SSH payload detection, got {anomalies:?}"
         );
+    }
+
+    #[test]
+    fn test_websocket_tracker_rejects_extreme_length_after_upgrade() {
+        let mut tracker = WebSocketTracker::new();
+        let upgrade = b"GET /socket HTTP/1.1\r\nHost: charger.local\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n";
+        assert!(tracker
+            .track("10.0.0.5", 51342, "10.0.0.10", 8080, upgrade)
+            .is_empty());
+
+        let mut frame = vec![0x82, 0xff];
+        frame.extend_from_slice(&u64::MAX.to_be_bytes());
+        frame.extend_from_slice(&[1, 2, 3, 4]);
+        let anomalies = tracker.track("10.0.0.5", 51342, "10.0.0.10", 8080, &frame);
+
+        assert!(
+            anomalies
+                .iter()
+                .any(|a| a.contains("websocket_invalid_frame") && a.contains("forbidden high bit")),
+            "expected invalid WebSocket length detection, got {anomalies:?}"
+        );
+    }
+
+    #[test]
+    fn test_websocket_tracker_accepts_valid_masked_frame() {
+        let mut tracker = WebSocketTracker::new();
+        let upgrade = b"GET /socket HTTP/1.1\r\nConnection: keep-alive, Upgrade\r\nUpgrade: WebSocket\r\n\r\n";
+        tracker.track("10.0.0.5", 51342, "10.0.0.10", 80, upgrade);
+
+        let frame = [0x81, 0x82, 1, 2, 3, 4, b'h' ^ 1, b'i' ^ 2];
+        let anomalies = tracker.track("10.0.0.5", 51342, "10.0.0.10", 80, &frame);
+        assert!(
+            anomalies.is_empty(),
+            "valid masked WebSocket frame should pass: {anomalies:?}"
+        );
+    }
+
+    #[test]
+    fn test_websocket_tracker_ignores_unconfirmed_binary_flow() {
+        let mut tracker = WebSocketTracker::new();
+        let frame = [0x82, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff];
+        let anomalies = tracker.track("10.0.0.5", 51342, "10.0.0.10", 9000, &frame);
+        assert!(anomalies.is_empty());
     }
 
     #[test]

