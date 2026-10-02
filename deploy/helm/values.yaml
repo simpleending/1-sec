@@ -4,7 +4,7 @@
 replicaCount: 1
 
 image:
-  repository: ghcr.io/cutmob/1-sec
+  repository: ghcr.io/simpleending/1-sec
   pullPolicy: IfNotPresent
   tag: ""  # Defaults to Chart.appVersion
 

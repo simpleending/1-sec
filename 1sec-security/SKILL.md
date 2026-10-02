@@ -16,10 +16,10 @@ compatibility: >
   ONESEC_API_KEY to secure the REST endpoint, ONESEC_WEBHOOK_URL for alert
   notifications.
 metadata:
-  author: cutmob
+  author: simpleending
   version: "0.4.11"
-  source_repository: "https://github.com/1sec-security/1sec"
-  security_policy: "https://github.com/1sec-security/1sec/blob/main/SECURITY.md"
+  source_repository: "https://github.com/simpleending/1-sec"
+  security_policy: "https://github.com/simpleending/1-sec/blob/main/SECURITY.md"
   env_vars:
     - name: GEMINI_API_KEY
       required: false
@@ -66,14 +66,14 @@ metadata:
 > does **not** pipe any downloaded content to a shell, does **not** execute any
 > remote scripts, and does **not** establish persistence or callbacks beyond what
 > is explicitly configured by the operator. All enforcement actions default to
-> dry-run (log-only) mode. Source code: https://github.com/1sec-security/1sec
+> dry-run (log-only) mode. Source code: https://github.com/simpleending/1-sec
 
 You are installing and configuring **1-SEC**, an open-source all-in-one
 cybersecurity platform. One binary, 16 defense modules, zero config required.
 
 > **Trust Statement:** Only install this skill if you trust the source.
 > 1-SEC is open-source (AGPL-3.0). Review the code, checksums, and SECURITY.md
-> before deploying to production systems. Source: https://github.com/1sec-security/1sec
+> before deploying to production systems. Source: https://github.com/simpleending/1-sec
 
 ## Security & Privacy
 
@@ -120,8 +120,8 @@ before running anything as root:
 ```bash
 # 1. Download the release binary and checksums
 VERSION="0.4.11"
-wget https://github.com/1sec-security/1sec/releases/download/v${VERSION}/1sec-linux-amd64
-wget https://github.com/1sec-security/1sec/releases/download/v${VERSION}/checksums.txt
+wget https://github.com/simpleending/1-sec/releases/download/v${VERSION}/1sec-linux-amd64
+wget https://github.com/simpleending/1-sec/releases/download/v${VERSION}/checksums.txt
 
 # 2. Verify SHA256 checksum before running as root
 sha256sum -c checksums.txt 2>&1 | grep 1sec-linux-amd64
@@ -144,7 +144,7 @@ the manual install path** (download binary + verify SHA256 from `checksums.txt`)
 so integrity is confirmed before any file is executed.
 
 Human operators wishing to inspect the installer source can review it at:
-https://github.com/1sec-security/1sec/blob/main/get.sh
+https://github.com/simpleending/1-sec/blob/main/install.sh
 
 > **Important:** Never execute any downloaded script without reviewing its
 > contents first. The manual install path above does not involve executing

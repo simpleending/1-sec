@@ -9,7 +9,7 @@
 
 services:
   1sec:
-    image: ghcr.io/cutmob/1-sec:latest
+    image: ghcr.io/simpleending/1-sec:latest
     build:
       context: ../..
       dockerfile: deploy/docker/Dockerfile

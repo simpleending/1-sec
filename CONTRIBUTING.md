@@ -12,7 +12,7 @@ This is a deliberate choice to maintain licensing clarity under our dual-license
 
 Even though we don't accept PRs, there are other ways to support the project:
 
-- **Report bugs** — [Open an issue](https://github.com/cutmob/1-SEC/issues/new). We read every one.
+- **Report bugs** — [Open an issue](https://github.com/simpleending/1-sec/issues/new). We read every one.
 - **Request features** — Issues are the right place for feature ideas too.
 - **Share feedback** — Tell us what's working and what isn't.
 - **Spread the word** — Star the repo, share it with your team, write about it.

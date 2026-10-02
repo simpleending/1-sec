@@ -79,8 +79,8 @@ changelog:
 
 release:
   github:
-    owner: cutmob
-    name: 1-SEC
+    owner: simpleending
+    name: 1-sec
   draft: false
   prerelease: auto
   name_template: "v{{.Version}}"

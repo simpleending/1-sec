@@ -39,7 +39,7 @@ FROM alpine:3.21
 LABEL org.opencontainers.image.title="1SEC" \
       org.opencontainers.image.description="All-in-one cybersecurity defense platform" \
       org.opencontainers.image.url="https://1-sec.dev" \
-      org.opencontainers.image.source="https://github.com/cutmob/1-SEC" \
+      org.opencontainers.image.source="https://github.com/simpleending/1-sec" \
       org.opencontainers.image.vendor="1SEC" \
       org.opencontainers.image.licenses="AGPL-3.0"
 

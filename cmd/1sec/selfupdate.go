@@ -26,7 +26,7 @@ import (
 )
 
 const (
-	githubRepo       = "cutmob/1-SEC"
+	githubRepo       = "simpleending/1-sec"
 	updateEnvDisable = "ONESEC_NO_UPDATE"
 	updateCheckFile  = ".1sec_last_update_check"
 	checkInterval    = 24 * time.Hour

@@ -186,8 +186,8 @@ Supported template names: `pagerduty` (or `pd`), `slack`, `teams` (or `msteams`)
 
 # Or download and verify manually from GitHub Releases:
 VERSION="0.5.0"  # replace with target version
-wget https://github.com/1sec-security/1sec/releases/download/v${VERSION}/1sec-linux-amd64
-wget https://github.com/1sec-security/1sec/releases/download/v${VERSION}/checksums.txt
+wget https://github.com/simpleending/1-sec/releases/download/v${VERSION}/1sec-linux-amd64
+wget https://github.com/simpleending/1-sec/releases/download/v${VERSION}/checksums.txt
 sha256sum -c checksums.txt 2>&1 | grep 1sec-linux-amd64
 chmod +x 1sec-linux-amd64
 sudo mv 1sec-linux-amd64 /usr/local/bin/1sec

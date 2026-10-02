@@ -7,9 +7,9 @@
   Covers AI attacks, prompt injection, ransomware, supply chain, deepfakes, quantum crypto, and more.</p>
 
   <p>
-    <a href="https://github.com/cutmob/1-SEC/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-AGPL%20v3-blue.svg?style=flat-square" alt="License"></a>
-    <a href="https://golang.org/"><img src="https://img.shields.io/github/go-mod/go-version/cutmob/1-SEC?style=flat-square&color=blue" alt="Go Version"></a>
-    <a href="https://github.com/cutmob/1-SEC/releases"><img src="https://img.shields.io/github/v/release/cutmob/1-SEC?style=flat-square&color=orange" alt="Release"></a>
+    <a href="https://github.com/simpleending/1-sec/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-AGPL%20v3-blue.svg?style=flat-square" alt="License"></a>
+    <a href="https://golang.org/"><img src="https://img.shields.io/github/go-mod/go-version/simpleending/1-sec?style=flat-square&color=blue" alt="Go Version"></a>
+    <a href="https://github.com/simpleending/1-sec/releases"><img src="https://img.shields.io/github/v/release/simpleending/1-sec?style=flat-square&color=orange" alt="Release"></a>
   </p>
 
   <p>
@@ -51,8 +51,8 @@ curl -fsSL https://1-sec.dev/get | sh
 Build from source:
 
 ```bash
-git clone https://github.com/cutmob/1-SEC.git
-cd 1-SEC
+git clone https://github.com/simpleending/1-sec.git
+cd 1-sec
 go build -o 1sec ./cmd/1sec
 ./1sec up
 ```
@@ -299,8 +299,8 @@ curl -fsSL https://1-sec.dev/get | sh
 
 ```bash
 # Clone and start
-git clone https://github.com/cutmob/1-SEC.git
-cd 1-SEC/deploy/docker
+git clone https://github.com/simpleending/1-sec.git
+cd 1-sec/deploy/docker
 
 # Set your Gemini key (optional — AI engine only)
 echo "GEMINI_API_KEY=your_key" > .env
@@ -531,4 +531,4 @@ You may not rebrand, resell, or offer 1-SEC as a competing commercial product or
 
 ## Contributing
 
-1-SEC does not accept external pull requests at this time. This is to maintain licensing clarity under our dual-license model. Bug reports and feature requests via [Issues](https://github.com/cutmob/1-SEC/issues) are welcome and encouraged. See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
+1-SEC does not accept external pull requests at this time. This is to maintain licensing clarity under our dual-license model. Bug reports and feature requests via [Issues](https://github.com/simpleending/1-sec/issues) are welcome and encouraged. See [CONTRIBUTING.md](CONTRIBUTING.md) for details.

@@ -28,8 +28,8 @@ Please do not open public GitHub issues for security vulnerabilities.
 ```bash
 # Download release and checksums
 VERSION="0.4.11"
-wget https://github.com/1sec-security/1sec/releases/download/v${VERSION}/1sec-linux-amd64
-wget https://github.com/1sec-security/1sec/releases/download/v${VERSION}/checksums.txt
+wget https://github.com/simpleending/1-sec/releases/download/v${VERSION}/1sec-linux-amd64
+wget https://github.com/simpleending/1-sec/releases/download/v${VERSION}/checksums.txt
 
 # Verify SHA256 checksum
 sha256sum -c checksums.txt 2>&1 | grep 1sec-linux-amd64
@@ -38,7 +38,7 @@ sha256sum -c checksums.txt 2>&1 | grep 1sec-linux-amd64
 ### Installer Script Source
 
 The installer script source code is publicly available for review at:
-https://github.com/1sec-security/1sec/blob/main/get.sh
+https://github.com/simpleending/1-sec/blob/main/install.sh
 
 The script downloads the same versioned binary from GitHub Releases used in
 the manual install path above, and verifies its SHA256 checksum before
@@ -169,5 +169,5 @@ When deploying 1-SEC:
 
 - **General inquiries**: hello@1-sec.dev
 - **Security issues**: security@1-sec.dev
-- **GitHub**: https://github.com/1sec-security/1sec
+- **GitHub**: https://github.com/simpleending/1-sec
 - **Documentation**: https://1-sec.dev/docs

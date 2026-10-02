@@ -20,8 +20,8 @@ AI agent VPS instances face a specific threat profile:
 ```bash
 # 1. Install (download from GitHub Releases with checksum verification)
 VERSION="0.4.11"
-wget https://github.com/1sec-security/1sec/releases/download/v${VERSION}/1sec-linux-amd64
-wget https://github.com/1sec-security/1sec/releases/download/v${VERSION}/checksums.txt
+wget https://github.com/simpleending/1-sec/releases/download/v${VERSION}/1sec-linux-amd64
+wget https://github.com/simpleending/1-sec/releases/download/v${VERSION}/checksums.txt
 sha256sum -c checksums.txt 2>&1 | grep 1sec-linux-amd64
 chmod +x 1sec-linux-amd64
 sudo mv 1sec-linux-amd64 /usr/local/bin/1sec
@@ -231,8 +231,8 @@ Different AI agents have different profiles. Tune based on what you see:
 
 # Or download and verify manually from GitHub Releases:
 VERSION="0.5.0"  # replace with target version
-wget https://github.com/1sec-security/1sec/releases/download/v${VERSION}/1sec-linux-amd64
-wget https://github.com/1sec-security/1sec/releases/download/v${VERSION}/checksums.txt
+wget https://github.com/simpleending/1-sec/releases/download/v${VERSION}/1sec-linux-amd64
+wget https://github.com/simpleending/1-sec/releases/download/v${VERSION}/checksums.txt
 sha256sum -c checksums.txt 2>&1 | grep 1sec-linux-amd64
 chmod +x 1sec-linux-amd64
 sudo mv 1sec-linux-amd64 /usr/local/bin/1sec

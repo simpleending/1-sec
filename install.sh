@@ -10,7 +10,7 @@
 
 set -e
 
-REPO="cutmob/1-SEC"
+REPO="simpleending/1-sec"
 BINARY="1sec"
 INSTALL_DIR="/usr/local/bin"
 VERSION="${ONESEC_VERSION:-}"

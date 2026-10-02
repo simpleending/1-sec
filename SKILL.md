@@ -16,10 +16,10 @@ compatibility: >
   ONESEC_API_KEY to secure the REST endpoint, ONESEC_WEBHOOK_URL for alert
   notifications.
 metadata:
-  author: cutmob
+  author: simpleending
   version: "0.4.11"
-  source_repository: "https://github.com/1sec-security/1sec"
-  security_policy: "https://github.com/1sec-security/1sec/blob/main/SECURITY.md"
+  source_repository: "https://github.com/simpleending/1-sec"
+  security_policy: "https://github.com/simpleending/1-sec/blob/main/SECURITY.md"
   env_vars:
     - name: GEMINI_API_KEY
       required: false
@@ -65,7 +65,7 @@ cybersecurity platform. One binary, 16 defense modules, zero config required.
 
 > **Trust Statement:** Only install this skill if you trust the source.
 > 1-SEC is open-source (AGPL-3.0) and available at
-> https://github.com/1sec-security/1sec. Review the code, checksums, and
+> https://github.com/simpleending/1-sec. Review the code, checksums, and
 > SECURITY.md before deploying to production systems.
 
 ## Security & Privacy
@@ -113,8 +113,8 @@ running as root:
 ```bash
 # 1. Download the release binary and checksums
 VERSION="0.4.11"
-wget https://github.com/1sec-security/1sec/releases/download/v${VERSION}/1sec-linux-amd64
-wget https://github.com/1sec-security/1sec/releases/download/v${VERSION}/checksums.txt
+wget https://github.com/simpleending/1-sec/releases/download/v${VERSION}/1sec-linux-amd64
+wget https://github.com/simpleending/1-sec/releases/download/v${VERSION}/checksums.txt
 
 # 2. Verify SHA256 checksum
 sha256sum -c checksums.txt 2>&1 | grep 1sec-linux-amd64
@@ -140,7 +140,7 @@ sh install.sh           # Run after review
 
 > **Note:** Piping remote scripts directly to `sh` (`curl | sh`) is
 > convenient but bypasses local review. The quick-install script is open-source
-> at https://github.com/1sec-security/1sec/blob/main/get.sh — review it before
+> at https://github.com/simpleending/1-sec/blob/main/install.sh — review it before
 > use on production systems.
 
 ## Post-Install Setup
