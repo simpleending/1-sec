@@ -49,7 +49,7 @@ jobs:
 
       - name: OSV dependency scan
         run: |
-          go install github.com/google/osv-scanner/v2/cmd/osv-scanner@latest
+          GOTOOLCHAIN=auto go install github.com/google/osv-scanner/v2/cmd/osv-scanner@latest
           osv-scanner scan source -r .
 
   rust-build:
