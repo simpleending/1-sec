@@ -1,24 +1,24 @@
 [[IgnoredVulns]]
 id = "RUSTSEC-2024-0436"
-ignoreUntil = 2026-09-30
+ignoreUntil = 2027-04-01
 reason = "Transitive paste dependency is pulled by optional pqcrypto crates. No patched pqcrypto replacement is available yet; track removal during PQC provider migration."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0161"
-ignoreUntil = 2026-09-30
+ignoreUntil = 2027-04-01
 reason = "Optional pqcrypto-mlkem crate is flagged unmaintained after upstream PQClean archival. No fixed version is available; track replacement during PQC provider migration."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0162"
-ignoreUntil = 2026-09-30
+ignoreUntil = 2027-04-01
 reason = "Optional pqcrypto-traits crate is flagged unmaintained after upstream PQClean archival. No fixed version is available; track replacement during PQC provider migration."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0163"
-ignoreUntil = 2026-09-30
+ignoreUntil = 2027-04-01
 reason = "Transitive pqcrypto-internals crate is flagged unmaintained after upstream PQClean archival. No fixed version is available; track replacement during PQC provider migration."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0166"
-ignoreUntil = 2026-09-30
+ignoreUntil = 2027-04-01
 reason = "Optional pqcrypto-mldsa crate is flagged unmaintained after upstream PQClean archival. No fixed version is available; track replacement during PQC provider migration."
