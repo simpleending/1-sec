@@ -212,6 +212,9 @@ func (c *Containment) HandleEvent(event *core.SecurityEvent) error {
 		c.handleAgentPayment(event)
 	case "agent_identity_delegation":
 		c.handleIdentityDelegation(event)
+		if valid, _ := c.delegationTracker.HasValidDelegation(getStringDetail(event, "agent_id")); !valid {
+			return nil
+		}
 	}
 	// Route to Token Vault sub-component if active — it handles token exchange,
 	// connected account, OAuth, and delegation events with token-aware context.
@@ -904,12 +907,20 @@ func (c *Containment) handleIdentityDelegation(event *core.SecurityEvent) {
 	expiresAt := getStringDetail(event, "expires_at")
 	delegationChain := getStringDetail(event, "delegation_chain")
 	attestation := getStringDetail(event, "attestation")
+	attestationVerified, _ := event.Details["attestation_verified"].(bool)
 
 	if agentID == "" {
 		agentID = "unknown"
 	}
 
-	result := c.delegationTracker.ValidateDelegation(agentID, delegatedBy, scopes, expiresAt, delegationChain, attestation)
+	result := c.delegationTracker.ValidateDelegation(agentID, delegatedBy, scopes, expiresAt, delegationChain, attestation, attestationVerified)
+
+	if result.InvalidExpiry {
+		c.raiseAlert(event, core.SeverityHigh,
+			"Agent Delegation Has Invalid Expiry",
+			fmt.Sprintf("Agent %s supplied a delegation without a valid RFC3339 expiry. The record cannot authorize sensitive actions.", agentID),
+			"delegation_verification_failed")
+	}
 
 	if result.Expired {
 		c.raiseAlert(event, core.SeverityHigh,
@@ -940,9 +951,9 @@ func (c *Containment) handleIdentityDelegation(event *core.SecurityEvent) {
 
 	if result.NoAttestation {
 		c.raiseAlert(event, core.SeverityMedium,
-			"Agent Delegation Without Cryptographic Attestation",
-			fmt.Sprintf("Agent %s claims delegation from %s but provides no cryptographic attestation. "+
-				"Delegation claims should be verifiable to prevent agent impersonation.",
+			"Agent Delegation Without Verified Attestation",
+			fmt.Sprintf("Agent %s claims delegation from %s without a verified attestation bound to that agent and principal. "+
+				"An attestation string alone cannot authorize sensitive actions.",
 				agentID, delegatedBy),
 			"delegation_no_attestation")
 	}
@@ -2336,10 +2347,12 @@ type delegationRecord struct {
 	ExpiresAt   string
 	ChainDepth  int
 	CreatedAt   time.Time
+	Verified    bool
 }
 
 type DelegationResult struct {
 	Expired         bool
+	InvalidExpiry   bool
 	ChainTooDeep    bool
 	ScopeEscalation bool
 	NoAttestation   bool
@@ -2351,24 +2364,21 @@ func NewDelegationChainTracker() *DelegationChainTracker {
 	return &DelegationChainTracker{delegations: dCache}
 }
 
-func (dt *DelegationChainTracker) ValidateDelegation(agentID, delegatedBy, scopes, expiresAt, delegationChain, attestation string) DelegationResult {
+func (dt *DelegationChainTracker) ValidateDelegation(agentID, delegatedBy, scopes, expiresAt, delegationChain, attestation string, attestationVerified bool) DelegationResult {
 	dt.mu.Lock()
 	defer dt.mu.Unlock()
 
 	result := DelegationResult{}
 
-	// Check attestation
-	if attestation == "" {
+	// Verification must come from the trusted identity provider, not the agent's text.
+	if strings.TrimSpace(attestation) == "" || !attestationVerified || strings.TrimSpace(delegatedBy) == "" || strings.TrimSpace(agentID) == "" || agentID == "unknown" {
 		result.NoAttestation = true
 	}
 
 	// Check expiry
-	if expiresAt != "" {
-		expiry, err := time.Parse(time.RFC3339, expiresAt)
-		if err == nil && time.Now().After(expiry) {
-			result.Expired = true
-		}
-	}
+	expiry, err := time.Parse(time.RFC3339, expiresAt)
+	result.InvalidExpiry = err != nil
+	result.Expired = err == nil && !time.Now().Before(expiry)
 
 	// Check delegation chain depth
 	chainDepth := 1
@@ -2402,6 +2412,7 @@ func (dt *DelegationChainTracker) ValidateDelegation(agentID, delegatedBy, scope
 		ExpiresAt:   expiresAt,
 		ChainDepth:  chainDepth,
 		CreatedAt:   time.Now(),
+		Verified:    !result.NoAttestation && !result.InvalidExpiry && !result.Expired && !result.ChainTooDeep && !result.ScopeEscalation,
 	})
 
 	return result
@@ -2417,13 +2428,14 @@ func (dt *DelegationChainTracker) HasValidDelegation(agentID string) (bool, stri
 	if !exists {
 		return false, "no delegation record found"
 	}
+	if !record.Verified {
+		return false, "delegation identity, attestation, expiry, or scope was not verified"
+	}
 
 	// Check expiry
-	if record.ExpiresAt != "" {
-		expiry, err := time.Parse(time.RFC3339, record.ExpiresAt)
-		if err == nil && time.Now().After(expiry) {
-			return false, "delegation expired at " + record.ExpiresAt
-		}
+	expiry, err := time.Parse(time.RFC3339, record.ExpiresAt)
+	if err != nil || !time.Now().Before(expiry) {
+		return false, "delegation has invalid or expired expiry"
 	}
 
 	// Check staleness (delegations older than 24h are suspicious)

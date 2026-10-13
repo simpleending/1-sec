@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"net"
+	"net/url"
 	"regexp"
 	"strings"
 	"sync"
@@ -303,8 +305,18 @@ func (f *Firewall) recordWebTaint(event *core.SecurityEvent) {
 // Ref: ChatGPhish / Third-Party Markdown Poisoning (weekly intel 2026-05-29).
 var markdownLinkRX = regexp.MustCompile(`(?i)(?:\[[^\]]*\]|\!\[[^\]]*\])\((https?://[^\)]+)\)`)
 
-// localHostRX matches localhost/private addresses to exclude from markdown poisoning alerts.
-var localHostRX = regexp.MustCompile(`(?i)^https?://(?:localhost|127\.0\.0\.1|0\.0\.0\.0|::1|10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)`)
+func isLocalMarkdownURL(raw string) bool {
+	parsed, err := url.Parse(raw)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && (ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified())
+}
 
 func (f *Firewall) analyzeOutput(event *core.SecurityEvent) {
 	output := getStringDetail(event, "output")
@@ -323,13 +335,14 @@ func (f *Firewall) analyzeOutput(event *core.SecurityEvent) {
 	if sessionID != "" {
 		f.mu.RLock()
 		taints, _ := f.sessionTaints.Get(sessionID)
+		webTainted := taints != nil && taints["WebContextFetch"]
 		f.mu.RUnlock()
-		if taints != nil && taints["WebContextFetch"] {
+		if webTainted {
 			for _, match := range markdownLinkRX.FindAllString(output, -1) {
 				// Extract the URL from the markdown link
 				if sub := markdownLinkRX.FindStringSubmatch(match); len(sub) > 1 {
 					url := sub[1]
-					if !localHostRX.MatchString(url) {
+					if !isLocalMarkdownURL(url) {
 						newEvent := core.NewSecurityEvent(ModuleName, "asi_markdown_poisoning", core.SeverityCritical,
 							fmt.Sprintf("Tainted session produced external markdown link after web fetch: %s", truncate(match, 200)))
 						newEvent.Details["original_event_id"] = event.ID
@@ -979,6 +992,7 @@ func NewToolChainMonitor() *ToolChainMonitor {
 		agents: aCache,
 		dangerousChains: []dangerousChain{
 			{name: "credential_exfiltration", sequence: []string{"file_read", "encode", "http_request"}, severity: core.SeverityCritical},
+			{name: "credential_exfiltration", sequence: []string{"credential_access", "encode", "http_request"}, severity: core.SeverityCritical},
 			{name: "data_staging", sequence: []string{"database_query", "file_write", "compress"}, severity: core.SeverityCritical},
 			{name: "reconnaissance_to_exploit", sequence: []string{"network_scan", "vulnerability_check", "exploit"}, severity: core.SeverityCritical},
 			{name: "privilege_escalation_chain", sequence: []string{"user_info", "permission_check", "role_modify"}, severity: core.SeverityCritical},
@@ -1002,6 +1016,14 @@ func (tc *ToolChainMonitor) RecordAndAnalyze(agentID, tool, target string) ToolC
 	}
 
 	category := categorizeToolUse(tool, target)
+	cutoff := now.Add(-time.Minute)
+	recent := state.recentTools[:0]
+	for _, use := range state.recentTools {
+		if !use.timestamp.Before(cutoff) {
+			recent = append(recent, use)
+		}
+	}
+	state.recentTools = recent
 	state.recentTools = append(state.recentTools, toolUse{
 		tool: category, target: target, timestamp: now,
 	})

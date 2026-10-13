@@ -118,14 +118,22 @@ func TestFortress_HandleEvent_AllKnownTypes(t *testing.T) {
 	}
 }
 
-func TestExtractRoleFromBearerJWT(t *testing.T) {
-	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none","typ":"JWT"}`))
-	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"role":"admin"}`))
-	token := header + "." + payload + ".signature"
-
-	role := extractRoleFromBearerJWT("Authorization: Bearer " + token)
-	if role != "admin" {
-		t.Fatalf("extractRoleFromBearerJWT() = %q, want admin", role)
+func TestFortress_MCPProvisioningDoesNotTrustBearerRole(t *testing.T) {
+	for _, claims := range []string{`{"role":"admin"}`, `{"roles":["root"]}`, `{"scope":"admin"}`} {
+		t.Run(claims, func(t *testing.T) {
+			cp := newCapPipeline()
+			f := startedFortress(t, cp.AlertPipeline)
+			defer f.Stop()
+			header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none","typ":"JWT"}`))
+			payload := base64.RawURLEncoding.EncodeToString([]byte(claims))
+			ev := makeAPIRequest("/api/mcp/servers", "POST", "user-1", "", "")
+			ev.Details["headers"] = "Authorization: Bearer " + header + "." + payload + ".forged"
+			ev.Details["body"] = `{"server_url":"http://localhost:3000/tools"}`
+			f.HandleEvent(ev)
+			if !cp.hasAlertType("mcp_server_registration_unauthorized") {
+				t.Fatal("unverified token claims suppressed the MCP registration alert")
+			}
+		})
 	}
 }
 

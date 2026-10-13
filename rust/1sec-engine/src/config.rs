@@ -139,3 +139,53 @@ impl EngineConfig {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn load_fixture(yaml: &str) -> Result<EngineConfig> {
+        let path = std::env::temp_dir().join(format!("1sec-config-{}.yaml", uuid::Uuid::new_v4()));
+        std::fs::write(&path, yaml).unwrap();
+        let result = EngineConfig::load(path.to_str().unwrap());
+        std::fs::remove_file(path).unwrap();
+        result
+    }
+
+    #[test]
+    fn yaml_config_preserves_aliases_and_capture_settings() {
+        let cfg = load_fixture(
+            r#"
+bus:
+  url: nats://192.0.2.1:4222
+settings: &engine
+  buffer_size: 2048
+  workers: 2
+  min_score: 0.75
+  aho_corasick_prefilter: false
+  capture:
+    snaplen: 4096
+    bpf_filter: "tcp port 443"
+    promiscuous: false
+rust_engine: *engine
+"#,
+        )
+        .unwrap();
+        assert_eq!(cfg.nats_url, "nats://192.0.2.1:4222");
+        assert_eq!(cfg.rust_engine.buffer_size, 2048);
+        assert_eq!(cfg.rust_engine.workers, 2);
+        assert_eq!(cfg.rust_engine.min_score, 0.75);
+        assert!(!cfg.rust_engine.aho_corasick_prefilter);
+        assert_eq!(cfg.rust_engine.capture.snaplen, 4096);
+        assert_eq!(
+            cfg.rust_engine.capture.bpf_filter.as_deref(),
+            Some("tcp port 443")
+        );
+        assert!(!cfg.rust_engine.capture.promiscuous);
+    }
+
+    #[test]
+    fn malformed_yaml_still_returns_an_error() {
+        assert!(load_fixture("bus: [unterminated").is_err());
+    }
+}

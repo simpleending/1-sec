@@ -371,10 +371,14 @@ func (tv *TokenVault) handleAgentDelegation(event *core.SecurityEvent) {
 	delegatedBy := getStringDetail(event, "delegated_by")
 	scopes := getStringDetail(event, "scopes")
 	connection := getStringDetail(event, "connection")
+	verified, _ := event.Details["attestation_verified"].(bool)
+	expiry, err := time.Parse(time.RFC3339, getStringDetail(event, "expires_at"))
+	if !verified || strings.TrimSpace(getStringDetail(event, "attestation")) == "" || err != nil || !time.Now().Before(expiry) {
+		return
+	}
 
 	// Track which agents are authorized to use which connections
-	if delegatedBy != "" && connection != "" {
-		tv.accountTracker.AuthorizeAgent(delegatedBy, connection, agentID, scopes)
+	if tv.accountTracker.AuthorizeAgent(delegatedBy, connection, agentID, scopes, expiry) {
 
 		tv.logger.Info().
 			Str("agent_id", agentID).
@@ -395,20 +399,18 @@ func (tv *TokenVault) handleAgentToolCall(event *core.SecurityEvent) {
 	}
 
 	// Check if the agent is using a token for a connection it wasn't delegated
-	if agentID != "" {
-		userID := getStringDetail(event, "user_id")
-		if userID != "" && !tv.accountTracker.IsAgentAuthorized(userID, connection, agentID) {
-			alert := newAlert(core.SeverityHigh,
-				"Agent using undelegated Token Vault connection",
-				fmt.Sprintf("Agent %q invoked tool %q using connection %q without delegation from user %q", agentID, tool, connection, userID),
-				map[string]interface{}{
-					"agent_id":   agentID,
-					"tool":       tool,
-					"connection": connection,
-					"user_id":    userID,
-				})
-			tv.pipeline.Process(alert)
-		}
+	userID := getStringDetail(event, "user_id")
+	if agentID == "" || userID == "" || !tv.accountTracker.IsAgentAuthorized(userID, connection, agentID) {
+		alert := newAlert(core.SeverityHigh,
+			"Agent using undelegated Token Vault connection",
+			fmt.Sprintf("Agent %q invoked tool %q using connection %q without delegation from user %q", agentID, tool, connection, userID),
+			map[string]interface{}{
+				"agent_id":   agentID,
+				"tool":       tool,
+				"connection": connection,
+				"user_id":    userID,
+			})
+		tv.pipeline.Process(alert)
 	}
 }
 
@@ -682,6 +684,7 @@ type agentAuth struct {
 	Scopes     string
 	GrantedAt  time.Time
 	GrantedBy  string // user_id who delegated
+	ExpiresAt  time.Time
 }
 
 // ConnectedAccountTracker monitors connected account state and agent authorization.
@@ -743,17 +746,29 @@ func (cat *ConnectedAccountTracker) RecordUsage(userID, connection, agentID, act
 	cat.usage[connection]++
 }
 
-func (cat *ConnectedAccountTracker) AuthorizeAgent(userID, connection, agentID, scopes string) {
+func (cat *ConnectedAccountTracker) AuthorizeAgent(userID, connection, agentID, scopes string, expiresAt time.Time) bool {
 	cat.mu.Lock()
 	defer cat.mu.Unlock()
+	if strings.TrimSpace(userID) == "" || strings.TrimSpace(connection) == "" || strings.TrimSpace(agentID) == "" || agentID == "unknown" || !time.Now().Before(expiresAt) {
+		return false
+	}
 
-	cat.agents[userID] = append(cat.agents[userID], agentAuth{
+	auth := agentAuth{
 		AgentID:    agentID,
 		Connection: connection,
 		Scopes:     scopes,
 		GrantedAt:  time.Now(),
 		GrantedBy:  userID,
-	})
+		ExpiresAt:  expiresAt,
+	}
+	for i, previous := range cat.agents[userID] {
+		if previous.AgentID == agentID && previous.Connection == connection {
+			cat.agents[userID][i] = auth
+			return true
+		}
+	}
+	cat.agents[userID] = append(cat.agents[userID], auth)
+	return true
 }
 
 func (cat *ConnectedAccountTracker) IsAgentAuthorized(userID, connection, agentID string) bool {
@@ -761,7 +776,7 @@ func (cat *ConnectedAccountTracker) IsAgentAuthorized(userID, connection, agentI
 	defer cat.mu.Unlock()
 
 	for _, auth := range cat.agents[userID] {
-		if auth.AgentID == agentID && auth.Connection == connection {
+		if auth.AgentID == agentID && auth.Connection == connection && time.Now().Before(auth.ExpiresAt) {
 			return true
 		}
 	}
@@ -785,7 +800,11 @@ func (cat *ConnectedAccountTracker) AgentCount() int {
 
 	total := 0
 	for _, auths := range cat.agents {
-		total += len(auths)
+		for _, auth := range auths {
+			if time.Now().Before(auth.ExpiresAt) {
+				total++
+			}
+		}
 	}
 	return total
 }

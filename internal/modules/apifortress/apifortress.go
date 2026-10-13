@@ -3,7 +3,6 @@ package apifortress
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"math"
 	"net/url"
@@ -186,7 +185,7 @@ func (f *Fortress) handleAPIRequest(event *core.SecurityEvent) {
 		f.checkPageMethodBypass(event, path, userRole)
 	}
 
-	f.checkMCPServerProvisioning(event, path, method, userRole, body, headers)
+	f.checkMCPServerProvisioning(event, path, method, userRole, body)
 
 	if findings := f.webhookScanner.Check(path, method, body, headers, contentType, webhookProvider, event.UserAgent); len(findings) > 0 {
 		for _, finding := range findings {
@@ -413,7 +412,6 @@ var (
 	mcpServerCommandPattern    = regexp.MustCompile(`(?is)"command"\s*:\s*"([^"]+)".{0,512}?"args"\s*:\s*\[([^\]]*)\]`)
 	mcpDangerousCommandPattern = regexp.MustCompile(`(?is)(?:^|[^\w])(?:bash|sh|zsh|dash|powershell|pwsh|cmd\.exe|curl|wget|nc|netcat|socat|python(?:3)?\s+-c|node\s+-e|perl\s+-e|ruby\s+-e|base64|eval)(?:[^\w]|$)|[;&|]{1,2}`)
 	httpURLPattern             = regexp.MustCompile(`https?://[^\s"'<>]+`)
-	authorizationBearerPattern = regexp.MustCompile(`(?i)authorization\s*:\s*bearer\s+([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)|bearer\s+([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)`)
 )
 
 // handleGRPCRequest detects gRPC requests missing authorization metadata,
@@ -479,7 +477,7 @@ func (f *Fortress) checkPageMethodBypass(event *core.SecurityEvent, path, userRo
 	}
 }
 
-func (f *Fortress) checkMCPServerProvisioning(event *core.SecurityEvent, path, method, userRole, body, headers string) {
+func (f *Fortress) checkMCPServerProvisioning(event *core.SecurityEvent, path, method, userRole, body string) {
 	hasProvisioningPath := mcpProvisioningPathPattern.MatchString(path)
 	hasDynamicConfig := mcpServersConfigPattern.MatchString(body)
 	if !hasProvisioningPath && !hasDynamicConfig {
@@ -490,9 +488,6 @@ func (f *Fortress) checkMCPServerProvisioning(event *core.SecurityEvent, path, m
 	}
 
 	role := strings.TrimSpace(userRole)
-	if role == "" {
-		role = extractRoleFromBearerJWT(headers)
-	}
 
 	if !isPrivilegedMCPRole(role) {
 		if hasDynamicConfig {
@@ -615,7 +610,7 @@ func getAPIMitigations(alertType string) []string {
 			"Require admin-equivalent roles for all MCP server registration or update endpoints",
 			"Bind MCP server provisioning to authenticated control-plane workflows instead of general API sessions",
 			"Log and review every failed MCP registration attempt for follow-on abuse",
-			"Treat bearer token role claims as mandatory input for MCP provisioning decisions",
+			"Provide user_role from a trusted authentication verifier; never derive authorization from an unverified bearer token",
 		}
 	case "mcp_server_registration_unapproved":
 		return []string{
@@ -2418,65 +2413,6 @@ func getIntDetail(event *core.SecurityEvent, key string) int {
 		return int(v)
 	}
 	return 0
-}
-
-func extractRoleFromBearerJWT(headers string) string {
-	matches := authorizationBearerPattern.FindStringSubmatch(headers)
-	if len(matches) == 0 {
-		return ""
-	}
-
-	token := ""
-	for _, candidate := range matches[1:] {
-		if candidate != "" {
-			token = candidate
-			break
-		}
-	}
-	if token == "" {
-		return ""
-	}
-
-	parts := strings.Split(token, ".")
-	if len(parts) != 3 {
-		return ""
-	}
-
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return ""
-	}
-
-	var claims map[string]interface{}
-	if err := json.Unmarshal(payload, &claims); err != nil {
-		return ""
-	}
-
-	for _, key := range []string{"role", "user_role", "jwt_role"} {
-		if val, ok := claims[key].(string); ok && val != "" {
-			return val
-		}
-	}
-	if roles, ok := claims["roles"].([]interface{}); ok {
-		for _, role := range roles {
-			if roleStr, ok := role.(string); ok && roleStr != "" {
-				return roleStr
-			}
-		}
-	}
-	for _, key := range []string{"scope", "scp"} {
-		if scope, ok := claims[key].(string); ok {
-			lower := strings.ToLower(scope)
-			if strings.Contains(lower, "admin") {
-				return "admin"
-			}
-			if strings.Contains(lower, "root") {
-				return "root"
-			}
-		}
-	}
-
-	return ""
 }
 
 func isPrivilegedMCPRole(role string) bool {

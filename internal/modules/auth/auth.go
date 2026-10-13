@@ -41,7 +41,7 @@ func New() *Fortress { return &Fortress{} }
 
 func (f *Fortress) Name() string { return ModuleName }
 func (f *Fortress) Description() string {
-	return "Brute force, credential stuffing, session theft, impossible travel, MFA bypass, password spraying, OAuth token abuse, consent phishing, passkey/FIDO2 downgrade, AitM proxy, and session token binding detection"
+	return "Brute force, credential stuffing, session theft, impossible travel, MFA bypass, password spraying, OAuth token abuse, consent phishing, passkey/FIDO2 downgrade, AitM proxy, session token binding, and SAML response structure detection"
 }
 func (f *Fortress) EventTypes() []string {
 	return []string{
@@ -57,6 +57,7 @@ func (f *Fortress) EventTypes() []string {
 		"password_spray", "distributed_auth",
 		"passkey_register", "passkey_auth", "webauthn_ceremony",
 		"auth_downgrade",
+		"saml_response",
 	}
 }
 
@@ -122,6 +123,8 @@ func (f *Fortress) HandleEvent(event *core.SecurityEvent) error {
 		f.handlePasskeyEvent(event)
 	case "auth_downgrade":
 		f.handleAuthDowngrade(event)
+	case "saml_response":
+		f.handleSAMLResponse(event)
 	}
 	return nil
 }
@@ -1157,6 +1160,12 @@ func (ad *AitMDetector) IsPasskeyRegistrationAnomaly(ip string) bool {
 
 func getAuthMitigations(alertType string) []string {
 	switch alertType {
+	case "saml_structure_violation":
+		return []string{
+			"Reject ambiguous SAML structures and validate against trusted local schemas",
+			"Verify the exact Response or Assertion signature with the configured IdP key before using claims",
+			"Validate issuer, audience, destination, request binding, expiry, and replay at the service provider",
+		}
 	case "brute_force":
 		return []string{
 			"Implement progressive account lockout with exponential backoff",

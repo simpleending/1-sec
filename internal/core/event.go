@@ -175,6 +175,7 @@ func CanonicalEventSchemas() []EventSchema {
 		{Type: "api_key_usage", Category: "auth", RequiredKeys: []string{"token_id", "action"}, OptionalKeys: []string{"username"}, Description: "API key usage event"},
 		{Type: "password_spray", Category: "auth", RequiredKeys: []string{"username"}, OptionalKeys: []string{}, Description: "Distributed password spray indicator"},
 		{Type: "distributed_auth", Category: "auth", RequiredKeys: []string{"username"}, OptionalKeys: []string{}, Description: "Distributed auth attack indicator"},
+		{Type: "saml_response", Category: "auth", RequiredKeys: []string{}, OptionalKeys: []string{"saml_response", "body"}, Description: "SAML response structure inspection; provide XML, base64 or a SAMLResponse form in saml_response or body"},
 
 		// ── Identity ────────────────────────────────────────────────────
 		{Type: "user_created", Category: "identity", RequiredKeys: []string{"user_id"}, OptionalKeys: []string{"email", "name", "source", "created_by"}, Description: "New user/identity created"},
@@ -303,7 +304,7 @@ func CanonicalEventSchemas() []EventSchema {
 		{Type: "agent_web_fetch", Category: "agentic_web", RequiredKeys: []string{"agent_id", "url"}, OptionalKeys: []string{"method", "accept_header", "response_content_type", "status_code", "content_hash", "domain", "response_size"}, Description: "AI agent fetching web content (HTML, markdown, llms.txt)"},
 		{Type: "agent_markdown_ingest", Category: "agentic_web", RequiredKeys: []string{"agent_id", "content"}, OptionalKeys: []string{"source_url", "domain", "content_hash", "content_length", "endpoint_type"}, Description: "AI agent ingesting markdown content from llms.txt or Accept: text/markdown endpoints"},
 		{Type: "agent_payment", Category: "agentic_web", RequiredKeys: []string{"agent_id", "amount", "recipient"}, OptionalKeys: []string{"currency", "protocol", "merchant_id", "network", "delegated_by", "spending_limit", "wallet_id"}, Description: "AI agent initiating a payment (x402, crypto, or other)"},
-		{Type: "agent_identity_delegation", Category: "agentic_web", RequiredKeys: []string{"agent_id", "delegated_by"}, OptionalKeys: []string{"scopes", "expires_at", "delegation_chain", "attestation"}, Description: "AI agent acting on behalf of a human via delegation"},
+		{Type: "agent_identity_delegation", Category: "agentic_web", RequiredKeys: []string{"agent_id", "delegated_by"}, OptionalKeys: []string{"scopes", "expires_at", "delegation_chain", "attestation", "attestation_verified", "connection"}, Description: "AI agent delegation; trusted verifier supplies boolean attestation_verified and an expiry bound to the agent and principal"},
 		{Type: "x402_payment", Category: "agentic_web", RequiredKeys: []string{"amount", "recipient"}, OptionalKeys: []string{"agent_id", "currency", "network", "status_code", "merchant_id", "wallet_id"}, Description: "HTTP 402 payment protocol transaction"},
 		{Type: "llms_txt_access", Category: "agentic_web", RequiredKeys: []string{"domain"}, OptionalKeys: []string{"agent_id", "endpoint_url", "content_hash", "response_size"}, Description: "Access to a site's llms.txt or llms-full.txt endpoint"},
 

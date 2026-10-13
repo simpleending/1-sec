@@ -1133,7 +1133,7 @@ func TestDelegationTracker_HasValidDelegation(t *testing.T) {
 
 	// Register valid delegation
 	futureExpiry := time.Now().Add(1 * time.Hour).Format(time.RFC3339)
-	dt.ValidateDelegation("agent-1", "admin@corp.com", "read,write", futureExpiry, "", "signed-token")
+	dt.ValidateDelegation("agent-1", "admin@corp.com", "read,write", futureExpiry, "", "signed-token", true)
 
 	// Should now be valid
 	valid, delegatedBy := dt.HasValidDelegation("agent-1")
@@ -1150,7 +1150,7 @@ func TestDelegationTracker_ExpiredDelegation(t *testing.T) {
 
 	// Register expired delegation
 	pastExpiry := time.Now().Add(-1 * time.Hour).Format(time.RFC3339)
-	dt.ValidateDelegation("agent-expired", "user@corp.com", "read", pastExpiry, "", "signed")
+	dt.ValidateDelegation("agent-expired", "user@corp.com", "read", pastExpiry, "", "signed", true)
 
 	// Should be invalid (expired)
 	valid, _ := dt.HasValidDelegation("agent-expired")

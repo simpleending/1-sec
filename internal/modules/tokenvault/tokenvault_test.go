@@ -91,7 +91,7 @@ func TestConnectedAccountTracker(t *testing.T) {
 	}
 
 	// Authorize agent
-	cat.AuthorizeAgent("user-1", "google-oauth2", "agent-1", "openid profile")
+	cat.AuthorizeAgent("user-1", "google-oauth2", "agent-1", "openid profile", time.Now().Add(time.Hour))
 	if !cat.IsAgentAuthorized("user-1", "google-oauth2", "agent-1") {
 		t.Error("agent should be authorized after delegation")
 	}

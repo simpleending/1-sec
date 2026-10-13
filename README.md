@@ -31,6 +31,8 @@
 - **Privacy first** — your data stays on your server; cloud features are opt-in
 - **AI is additive** — all 16 modules work standalone; the AI analysis layer adds cross-module correlation on top
 
+Security intelligence reviews include verified code changes and regression checks. See the [October 13 implementation notes](docs/security-updates/2026-10-13.md) for SAML structure detection, agent identity checks, and exfiltration hardening.
+
 ---
 
 ## Quick Start
