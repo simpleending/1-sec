@@ -39,6 +39,33 @@ func TestReloadConfig_EmptyPath_Error(t *testing.T) {
 	}
 }
 
+func TestReloadManagementPolicyRequiresRestartBeforeMutation(t *testing.T) {
+	e := testReloadEngine()
+	oldLevel := e.Config.Logging.Level
+	path := writeReloadConfig(t, `
+logging:
+  level: debug
+management_access:
+  allowed_sources: ["10.20.0.0/24"]
+  allowed_operators: ["engineer"]
+`)
+	_, err := ReloadConfig(e, path, zerolog.Nop())
+	if err == nil || !strings.Contains(err.Error(), "restart") {
+		t.Fatalf("expected restart error: %v", err)
+	}
+	if e.Config.Logging.Level != oldLevel || len(e.Config.ManagementAccess.AllowedSources) != 0 {
+		t.Fatal("rejected reload partially changed active configuration")
+	}
+	path = writeReloadConfig(t, `
+management_access:
+  allowed_sources: []
+  allowed_operators: []
+`)
+	if _, err := ReloadConfig(e, path, zerolog.Nop()); err != nil {
+		t.Fatalf("empty lists and defaults should be equivalent: %v", err)
+	}
+}
+
 func TestReloadConfig_NonExistentFile_UsesDefaults(t *testing.T) {
 	e := testReloadEngine()
 	changes, err := ReloadConfig(e, "/nonexistent/config.yaml", zerolog.Nop())

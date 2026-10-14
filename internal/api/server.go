@@ -65,6 +65,7 @@ func NewServer(engine *core.Engine) *Server {
 	// ── Mutating endpoints (require write scope) ────────────────────
 	mux.HandleFunc("/api/v1/alerts/clear", s.handleAlertsClear)
 	mux.HandleFunc("/api/v1/events", s.handleIngestEvent)
+	mux.HandleFunc("/api/v1/access/check", s.handleManagementAccessCheck)
 	mux.HandleFunc("/api/v1/enforce/policies/", s.handleEnforcePolicyAction)
 	mux.HandleFunc("/api/v1/enforce/dry-run/", s.handleEnforceDryRun)
 	mux.HandleFunc("/api/v1/enforce/test/", s.handleEnforceTest)
@@ -717,6 +718,7 @@ func decodeJSONBody(r *http.Request, dst interface{}) error {
 
 // mutatingPaths lists URL path prefixes that require write-scope API keys.
 var mutatingPaths = map[string]bool{
+	"/api/v1/access/check":            true,
 	"/api/v1/events":                  true,
 	"/api/v1/alerts/clear":            true,
 	"/api/v1/shutdown":                true,

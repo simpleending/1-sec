@@ -14,18 +14,19 @@ import (
 
 // Config holds the entire 1SEC configuration.
 type Config struct {
-	Server      ServerConfig            `yaml:"server"`
-	Bus         BusConfig               `yaml:"bus"`
-	Alerts      AlertConfig             `yaml:"alerts"`
-	Syslog      SyslogConfig            `yaml:"syslog"`
-	Modules     map[string]ModuleConfig `yaml:"modules"`
-	Logging     LoggingConfig           `yaml:"logging"`
-	RustEngine  RustEngineConfig        `yaml:"rust_engine"`
-	Enforcement *EnforcementConfig      `yaml:"enforcement,omitempty"`
-	Archive     ArchiveConfig           `yaml:"archive"`
-	Cloud       CloudConfig             `yaml:"cloud"`
-	TokenVault  TokenVaultConfig        `yaml:"token_vault"`
-	Escalation  EscalationConfig        `yaml:"escalation"`
+	Server           ServerConfig            `yaml:"server"`
+	Bus              BusConfig               `yaml:"bus"`
+	Alerts           AlertConfig             `yaml:"alerts"`
+	Syslog           SyslogConfig            `yaml:"syslog"`
+	Modules          map[string]ModuleConfig `yaml:"modules"`
+	Logging          LoggingConfig           `yaml:"logging"`
+	RustEngine       RustEngineConfig        `yaml:"rust_engine"`
+	Enforcement      *EnforcementConfig      `yaml:"enforcement,omitempty"`
+	Archive          ArchiveConfig           `yaml:"archive"`
+	Cloud            CloudConfig             `yaml:"cloud"`
+	TokenVault       TokenVaultConfig        `yaml:"token_vault"`
+	Escalation       EscalationConfig        `yaml:"escalation"`
+	ManagementAccess ManagementAccessConfig  `yaml:"management_access"`
 }
 
 // TokenVaultConfig holds settings for Auth0 Token Vault integration.
@@ -434,6 +435,9 @@ func (c *Config) ValidateAPIKey(key string) string {
 // Validate checks the configuration for common errors and returns a list of
 // warnings and a list of errors. Errors are fatal; warnings are informational.
 func (c *Config) Validate() (warnings []string, errs []string) {
+	if _, err := NewManagementAccessPolicy(c.ManagementAccess); err != nil {
+		errs = append(errs, err.Error())
+	}
 	// Server port
 	if c.Server.Port <= 0 || c.Server.Port > 65535 {
 		errs = append(errs, fmt.Sprintf("server.port %d is out of range (1-65535)", c.Server.Port))

@@ -22,19 +22,20 @@ const ModuleName = "iot_shield"
 // scanning, rogue device detection, OT command validation, device behavior
 // baseline monitoring, network segmentation enforcement, and firmware CVE tracking.
 type Shield struct {
-	logger      zerolog.Logger
-	bus         *core.EventBus
-	pipeline    *core.AlertPipeline
-	cfg         *core.Config
-	ctx         context.Context
-	cancel      context.CancelFunc
-	inventory   *DeviceInventory
-	anomalyDet  *ProtocolAnomalyDetector
-	behaviorMon *DeviceBehaviorMonitor
-	otValidator *OTCommandValidator
-	credScanner *CredentialScanner
-	fwIntegrity *FirmwareIntegrityDB
-	segEnforcer *SegmentationEnforcer
+	logger       zerolog.Logger
+	bus          *core.EventBus
+	pipeline     *core.AlertPipeline
+	cfg          *core.Config
+	ctx          context.Context
+	cancel       context.CancelFunc
+	inventory    *DeviceInventory
+	anomalyDet   *ProtocolAnomalyDetector
+	behaviorMon  *DeviceBehaviorMonitor
+	otValidator  *OTCommandValidator
+	credScanner  *CredentialScanner
+	fwIntegrity  *FirmwareIntegrityDB
+	segEnforcer  *SegmentationEnforcer
+	accessPolicy *core.ManagementAccessPolicy
 }
 
 func New() *Shield { return &Shield{} }
@@ -49,6 +50,7 @@ func (s *Shield) EventTypes() []string {
 		"protocol_message",
 		"firmware_update", "firmware_check",
 		"ot_command", "scada_command", "plc_command",
+		"management_access", "management_exposure",
 		"network_flow", "iot_network",
 		// 2025-2026: persistent firmware implants, ICS wiper malware, coordinated OT attacks
 		"firmware_boot", "firmware_flash",
@@ -58,6 +60,11 @@ func (s *Shield) EventTypes() []string {
 }
 
 func (s *Shield) Start(ctx context.Context, bus *core.EventBus, pipeline *core.AlertPipeline, cfg *core.Config) error {
+	policy, err := core.NewManagementAccessPolicy(cfg.ManagementAccess)
+	if err != nil {
+		return err
+	}
+	s.accessPolicy = policy
 	s.ctx, s.cancel = context.WithCancel(ctx)
 	s.bus = bus
 	s.pipeline = pipeline
@@ -99,6 +106,13 @@ func (s *Shield) HandleEvent(event *core.SecurityEvent) error {
 		s.handleFirmwareEvent(event)
 	case "ot_command", "scada_command", "plc_command":
 		s.handleOTCommand(event)
+	case "management_access":
+		s.handleManagementAccess(event)
+	case "management_exposure":
+		if exposed, _ := event.Details["publicly_reachable"].(bool); exposed {
+			s.raiseAlert(event, core.SeverityCritical, "Management Interface Exposed to Internet",
+				fmt.Sprintf("Management interface for %s is publicly reachable. Restrict access to a protected management network.", getStringDetail(event, "target")), "management_exposure")
+		}
 	case "network_flow", "iot_network":
 		s.handleNetworkFlow(event)
 	// 2025-2026: persistent firmware implants (HiatusRAT-X, bootloader rootkits)
@@ -264,11 +278,14 @@ func (s *Shield) handleOTCommand(event *core.SecurityEvent) {
 	operator := getStringDetail(event, "operator")
 
 	result := s.otValidator.Validate(protocol, command, functionCode, target, value, operator, event.SourceIP)
+	if s.accessPolicy.Configured() {
+		s.handleManagementAccess(event)
+	}
 
 	if result.Blocked {
 		s.raiseAlert(event, core.SeverityCritical,
-			"Dangerous OT Command Blocked",
-			fmt.Sprintf("Blocked %s command on %s protocol from %s (operator: %s): %s. Target: %s, Value: %s",
+			"Dangerous OT Command Detected",
+			fmt.Sprintf("Detected %s command on %s protocol from %s (operator: %s): %s. Target: %s, Value: %s. Traffic rejection requires an enforcing gateway or response integration.",
 				command, protocol, event.SourceIP, operator, result.Reason, target, value),
 			"ot_command_blocked")
 	}
@@ -289,12 +306,26 @@ func (s *Shield) handleOTCommand(event *core.SecurityEvent) {
 			"ot_out_of_range")
 	}
 
-	if result.UnauthorizedSource {
-		s.raiseAlert(event, core.SeverityCritical,
-			"OT Command from Unauthorized Source",
-			fmt.Sprintf("OT command on %s from unauthorized IP %s. Only designated engineering workstations should issue OT commands.",
-				protocol, event.SourceIP),
-			"ot_unauthorized_source")
+}
+
+// CheckManagementAccess returns a decision; the calling gateway enforces it.
+func (s *Shield) CheckManagementAccess(req core.ManagementAccessRequest) core.ManagementAccessDecision {
+	return s.accessPolicy.Check(req)
+}
+
+func (s *Shield) handleManagementAccess(event *core.SecurityEvent) {
+	verified, _ := event.Details["identity_verified"].(bool)
+	action := getStringDetail(event, "action")
+	if action == "" {
+		action = getStringDetail(event, "command")
+	}
+	req := core.ManagementAccessRequest{SourceIP: event.SourceIP, Operator: getStringDetail(event, "operator"),
+		IdentityVerified: verified, Target: getStringDetail(event, "target"), Action: action}
+	decision := s.CheckManagementAccess(req)
+	if !decision.Allowed {
+		s.raiseAlert(event, core.SeverityCritical, "Management Access Denied by Policy",
+			fmt.Sprintf("Access to %s by operator %s from %s fails management policy: %s. Telemetry is an alert; a gateway must enforce the decision before forwarding.",
+				req.Target, req.Operator, req.SourceIP, decision.Reason), "management_access_denied")
 	}
 }
 
@@ -537,6 +568,10 @@ func getIoTMitigations(alertType string) []string {
 		return append(base, "Enforce strict network segmentation between IT and OT zones",
 			"Deploy firewalls between IoT VLANs and corporate networks",
 			"Monitor east-west traffic within IoT segments")
+	case "management_access_denied", "management_exposure":
+		return append(base, "Remove public exposure of management interfaces",
+			"Require a protected VPN or management gateway with independently verified operator identity",
+			"Forward requests only after an explicit allow decision from the access policy")
 	case "protocol_anomaly", "unusual_protocol":
 		return append(base, "Baseline normal protocol usage per device type",
 			"Block unauthorized protocols at the network level")
@@ -1236,7 +1271,6 @@ func (bm *DeviceBehaviorMonitor) CleanupLoop(ctx context.Context) {
 
 type OTCommandValidator struct {
 	mu                sync.RWMutex
-	authorizedIPs     map[string]bool
 	dangerousCommands map[string]*regexp.Regexp
 	safeRanges        map[string]*safeRange
 }
@@ -1247,16 +1281,14 @@ type safeRange struct {
 }
 
 type OTValidationResult struct {
-	Blocked            bool
-	Suspicious         bool
-	OutOfRange         bool
-	UnauthorizedSource bool
-	Reason             string
+	Blocked    bool
+	Suspicious bool
+	OutOfRange bool
+	Reason     string
 }
 
 func NewOTCommandValidator() *OTCommandValidator {
 	return &OTCommandValidator{
-		authorizedIPs: make(map[string]bool),
 		dangerousCommands: map[string]*regexp.Regexp{
 			"modbus": regexp.MustCompile(`(?i)(restart|reset|factory.?default|flash|firmware.?update|format|clear.?all|emergency.?stop)`),
 			"dnp3":   regexp.MustCompile(`(?i)(cold.?restart|warm.?restart|stop.?application|initialize|clear.?config)`),
@@ -1279,12 +1311,6 @@ func (v *OTCommandValidator) Validate(protocol, command string, functionCode int
 	defer v.mu.RUnlock()
 
 	result := OTValidationResult{}
-
-	// Check authorized source IPs (if configured)
-	if len(v.authorizedIPs) > 0 && !v.authorizedIPs[sourceIP] {
-		result.UnauthorizedSource = true
-		result.Reason = fmt.Sprintf("IP %s is not in the authorized OT command source list", sourceIP)
-	}
 
 	// Check dangerous commands
 	if pattern, ok := v.dangerousCommands[protocol]; ok {
@@ -1520,28 +1546,36 @@ type SegmentationViolation struct {
 func NewSegmentationEnforcer(settings map[string]interface{}) *SegmentationEnforcer {
 	se := &SegmentationEnforcer{
 		blockedFlows: map[string]bool{
-			"iot->corporate":    true,
-			"iot->management":   true,
-			"ot->internet":      true,
-			"ot->corporate":     true,
-			"scada->internet":   true,
-			"dmz->ot":           true,
-			"guest->ot":         true,
-			"guest->iot":        true,
-			"guest->management": true,
+			"internet->ot":         true,
+			"internet->iot":        true,
+			"internet->scada":      true,
+			"internet->plc":        true,
+			"internet->safety":     true,
+			"internet->management": true,
+			"iot->corporate":       true,
+			"iot->management":      true,
+			"ot->internet":         true,
+			"ot->corporate":        true,
+			"scada->internet":      true,
+			"dmz->ot":              true,
+			"guest->ot":            true,
+			"guest->iot":           true,
+			"guest->management":    true,
 		},
 		allowedPorts: map[string][]int{
 			"corporate->iot": {443, 8443}, // HTTPS management only
 			"iot->ot":        {},          // no direct access
 		},
 		criticalZones: map[string]bool{
-			"ot": true, "scada": true, "safety": true, "plc": true,
+			"ot": true, "scada": true, "safety": true, "plc": true, "management": true,
 		},
 	}
 	return se
 }
 
 func (se *SegmentationEnforcer) Check(srcZone, dstZone, srcIP, dstIP string, dstPort int, protocol string) *SegmentationViolation {
+	srcZone = strings.ToLower(strings.TrimSpace(srcZone))
+	dstZone = strings.ToLower(strings.TrimSpace(dstZone))
 	if srcZone == "" || dstZone == "" || srcZone == dstZone {
 		return nil
 	}

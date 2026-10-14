@@ -33,6 +33,8 @@
 
 Security intelligence reviews include verified code changes and regression checks. See the [October 13 implementation notes](docs/security-updates/2026-10-13.md) for SAML structure detection, agent identity checks, and exfiltration hardening.
 
+The [October 14 management-access update](docs/security-updates/2026-10-14.md) adds a deny-by-default decision API for trusted gateways and public management-exposure alerts. A gateway must enforce the decision before forwarding; installing 1-SEC alone does not put it in the equipment's request path.
+
 ---
 
 ## Quick Start
@@ -445,6 +447,7 @@ unless `server.allow_unauthenticated_read` is set.
 | GET | `/api/v1/enforce/webhooks/stats` | Webhook dispatcher statistics |
 | GET | `/api/v1/enforce/webhooks/dead-letters` | Failed webhook deliveries |
 | POST | `/api/v1/events` | Ingest an external SecurityEvent |
+| POST | `/api/v1/access/check` | Trusted gateway management-access decision (write key; deny by default) |
 | POST | `/api/v1/shutdown` | Graceful shutdown |
 | POST | `/api/v1/config/reload` | Hot-reload configuration |
 | DELETE | `/api/v1/alerts/clear` | Clear all alerts |

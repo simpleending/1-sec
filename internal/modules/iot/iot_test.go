@@ -687,13 +687,13 @@ func TestShield_HandleEvent_OTCommandBlocked(t *testing.T) {
 	titles := cp.alertTitles()
 	found := false
 	for _, title := range titles {
-		if title == "Dangerous OT Command Blocked" {
+		if title == "Dangerous OT Command Detected" {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Errorf("expected 'Dangerous OT Command Blocked' alert, got: %v", titles)
+		t.Errorf("expected 'Dangerous OT Command Detected' alert, got: %v", titles)
 	}
 }
 

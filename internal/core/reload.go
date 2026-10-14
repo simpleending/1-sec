@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/rs/zerolog"
 )
@@ -21,6 +22,7 @@ import (
 //   - bus config (NATS URL, port, data dir)
 //   - server host/port
 //   - TLS config
+//   - management access policy (rejects reload before applying other changes)
 func ReloadConfig(engine *Engine, configPath string, logger zerolog.Logger) ([]string, error) {
 	if configPath == "" {
 		return nil, fmt.Errorf("no config path set — cannot reload")
@@ -32,6 +34,10 @@ func ReloadConfig(engine *Engine, configPath string, logger zerolog.Logger) ([]s
 	}
 
 	var changes []string
+	if !slices.Equal(newCfg.ManagementAccess.AllowedSources, engine.Config.ManagementAccess.AllowedSources) ||
+		!slices.Equal(newCfg.ManagementAccess.AllowedOperators, engine.Config.ManagementAccess.AllowedOperators) {
+		return nil, fmt.Errorf("management_access changes require an engine restart; no configuration changes applied")
+	}
 
 	// Reload logging level
 	if newCfg.LogLevel() != engine.Config.LogLevel() {

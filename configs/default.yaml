@@ -175,6 +175,14 @@ rust_engine:
     # Without the Rust binary, all other features work — capture is the "power
     # user" upgrade for environments that need wire-level visibility.
 
+# Trusted management gateways can consult POST /api/v1/access/check before forwarding.
+# Empty lists deny every access-check request. Both lists must be populated.
+# The gateway must verify identity independently and keep its write API key private.
+# Changes require an engine restart. This does not install a proxy or change equipment.
+management_access:
+  allowed_sources: []       # e.g. ["10.20.0.0/24", "2001:db8:20::/64"]
+  allowed_operators: []     # exact verified identities, e.g. ["maintenance@example.com"]
+
 # ── Enforcement / Automated Response ─────────────────────────────────────────
 # The enforcement layer subscribes to alerts and executes configurable response
 # actions. Start in dry_run mode to audit what would happen before going live.

@@ -168,6 +168,9 @@ settings: &engine
     bpf_filter: "tcp port 443"
     promiscuous: false
 rust_engine: *engine
+management_access:
+  allowed_sources: ["10.20.0.0/24"]
+  allowed_operators: ["engineer@example.com"]
 "#,
         )
         .unwrap();

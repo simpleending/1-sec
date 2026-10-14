@@ -257,15 +257,17 @@ func CanonicalEventSchemas() []EventSchema {
 		{Type: "partition_write", Category: "ransomware", RequiredKeys: []string{}, OptionalKeys: []string{"target"}, Description: "Partition table write"},
 
 		// ── IoT / OT ────────────────────────────────────────────────────
+		{Type: "management_access", Category: "iot", RequiredKeys: []string{"target", "action", "operator", "identity_verified"}, OptionalKeys: []string{}, Description: "Management access with identity verified by a trusted gateway"},
+		{Type: "management_exposure", Category: "iot", RequiredKeys: []string{"target", "publicly_reachable"}, OptionalKeys: []string{"device_id", "vendor"}, Description: "Management-interface exposure reported by a trusted inventory integration"},
 		{Type: "device_connect", Category: "iot", RequiredKeys: []string{"device_id"}, OptionalKeys: []string{"device_type", "mac_address", "firmware_version", "vendor", "protocol"}, Description: "IoT device connection"},
 		{Type: "device_activity", Category: "iot", RequiredKeys: []string{"device_id"}, OptionalKeys: []string{"device_type", "protocol"}, Description: "IoT device activity"},
 		{Type: "iot_traffic", Category: "iot", RequiredKeys: []string{}, OptionalKeys: []string{"device_id", "protocol"}, Description: "IoT network traffic"},
 		{Type: "protocol_message", Category: "iot", RequiredKeys: []string{"protocol"}, OptionalKeys: []string{"payload", "payload_size", "function_code"}, Description: "OT protocol message (Modbus/DNP3/OPCUA/BACnet/MQTT/CoAP)"},
 		{Type: "firmware_update", Category: "iot", RequiredKeys: []string{"device_id"}, OptionalKeys: []string{"firmware_version", "firmware_hash", "expected_hash"}, Description: "Firmware update event"},
 		{Type: "firmware_check", Category: "iot", RequiredKeys: []string{"device_id"}, OptionalKeys: []string{"firmware_version", "firmware_hash"}, Description: "Firmware integrity check"},
-		{Type: "ot_command", Category: "iot", RequiredKeys: []string{"protocol"}, OptionalKeys: []string{"command", "function_code", "target", "value", "operator"}, Description: "OT/SCADA command"},
-		{Type: "scada_command", Category: "iot", RequiredKeys: []string{"protocol"}, OptionalKeys: []string{"command", "target", "value"}, Description: "SCADA command"},
-		{Type: "plc_command", Category: "iot", RequiredKeys: []string{"protocol"}, OptionalKeys: []string{"command", "target"}, Description: "PLC command"},
+		{Type: "ot_command", Category: "iot", RequiredKeys: []string{"protocol"}, OptionalKeys: []string{"command", "function_code", "target", "value", "operator", "identity_verified"}, Description: "OT/SCADA command"},
+		{Type: "scada_command", Category: "iot", RequiredKeys: []string{"protocol"}, OptionalKeys: []string{"command", "target", "value", "operator", "identity_verified"}, Description: "SCADA command"},
+		{Type: "plc_command", Category: "iot", RequiredKeys: []string{"protocol"}, OptionalKeys: []string{"command", "target", "operator", "identity_verified"}, Description: "PLC command"},
 		{Type: "network_flow", Category: "iot", RequiredKeys: []string{}, OptionalKeys: []string{"src_zone", "dst_zone", "dest_port", "protocol"}, Description: "Network flow for segmentation enforcement"},
 		{Type: "iot_network", Category: "iot", RequiredKeys: []string{}, OptionalKeys: []string{"src_zone", "dst_zone"}, Description: "IoT network flow"},
 
