@@ -402,17 +402,17 @@ func TestVideoAnalyzer_EmptyFrames(t *testing.T) {
 	}
 }
 
-func TestVideoAnalyzer_ConsistentFrameEntropy(t *testing.T) {
+func TestVideoAnalyzer_StaticScene(t *testing.T) {
 	v := NewVideoAnalyzer()
-	// Identical frames = unnaturally consistent
+	// Identical frames are normal for paused video and slide presentations.
 	frame := make([]byte, 1024)
 	for i := range frame {
 		frame[i] = byte(i % 256)
 	}
 	frames := [][]byte{frame, frame, frame, frame}
 	result := v.Analyze(frames, nil)
-	if result.Score == 0 {
-		t.Error("expected non-zero score for identical frames")
+	if result.Score != 0 {
+		t.Error("static video must not be treated as evidence of a deepfake")
 	}
 }
 

@@ -333,13 +333,10 @@ func TestClassifyQuantumVulnerability_DraftAlgorithms(t *testing.T) {
 	}
 }
 
-func TestClassifyQuantumVulnerability_SymmetricWeak(t *testing.T) {
+func TestClassifyQuantumVulnerability_AES128(t *testing.T) {
 	v := classifyQuantumVulnerability("AES", 128, "encryption")
-	if !v.Vulnerable {
-		t.Error("AES-128 should be quantum-vulnerable (Grover's algorithm)")
-	}
-	if v.Severity != core.SeverityLow {
-		t.Errorf("AES-128 severity = %v, want Low", v.Severity)
+	if v.Vulnerable || !v.Resistant {
+		t.Error("AES-128 must not be labeled broken by a theoretical Grover speedup; see NIST PQC FAQ")
 	}
 }
 

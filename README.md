@@ -2,7 +2,7 @@
   <img src="https://1-sec.dev/og-image.png" alt="1-SEC" width="100%">
 
   <h1>🛡️ 1-SEC</h1>
-  <p><strong>One binary. Total defense.</strong></p>
+  <p><strong>One binary. Connected security signals.</strong></p>
   <p>16 security modules. Single binary. Zero config required.<br/>
   Covers AI attacks, prompt injection, ransomware, supply chain, deepfakes, quantum crypto, and more.</p>
 
@@ -89,18 +89,20 @@ helm install 1sec ./deploy/helm \
 | 5 | **Supply Chain Sentinel** | SBOM generation, package integrity, typosquatting (Levenshtein), dependency confusion, CI/CD hardening | 2 |
 | 6 | **Ransomware Interceptor** | Encryption detection (threshold: 5 files), canary files, exfiltration monitoring, wiper detection (MBR/GPT), shadow copy deletion, compound attack correlation, intermittent/partial encryption detection, ESXi/hypervisor ransomware targeting, SSH tunneling for lateral movement, pre-ransomware credential harvesting (Mimikatz, LSASS, NTLM, Kerberos), Linux ransomware patterns | 2 |
 | 7 | **Auth Fortress** | Brute force, credential stuffing, session hijack, impossible travel, MFA fatigue, OAuth consent phishing, password spray, stolen token detection, AitM/adversary-in-the-middle detection, passkey/FIDO2/WebAuthn monitoring, auth downgrade detection | 3 |
-| 8 | **Deepfake Shield** | Prosodic audio analysis (pitch/jitter/shimmer/HNR), MFCC trajectory smoothness, phase coherence, spectral flatness, ELA video forensics, AI phishing with writing style analysis, expanded Unicode homoglyph + Punycode domain spoofing, reply-chain verification, BEC detection | 3 |
+| 8 | **Deepfake Shield** | Validated PCM audio anomaly screening (prosody/MFCC/phase statistics), bounded JPEG/PNG frame analysis, phishing indicators, Unicode homoglyph + Punycode domain spoofing, reply-chain checks. Media scores are uncalibrated screening signals, not authenticity verdicts. | 3 |
 | 9 | **Identity Fabric Monitor** | Synthetic identity detection, privilege escalation, service account anomaly, bulk creation detection | 3 |
 | 10 | **LLM Firewall** | 65+ prompt injection patterns, jailbreak detection (DAN, FlipAttack, many-shot, time bandit, skeleton key, XPIA, LPCI, etc.), output filtering, multi-turn tracking, tool-chain abuse, excessive agency monitoring, system prompt leakage detection, RAG/embedding weakness analysis, misinformation detection, multimodal hidden injection scanning (image metadata, HTML/CSS, PDF hidden text). Zero LLM calls, zero external dependencies. | 4 |
 | 11 | **AI Agent Containment** | Action sandboxing, tool-use monitoring, shadow AI detection, scope escalation, policy enforcement, OWASP Agentic AI Top 10 coverage, tool integrity monitoring, goal hijack detection, memory poisoning detection, cascade failure monitoring | 4 |
 | 12 | **Data Poisoning Guard** | Training data integrity, RAG pipeline validation (30+ injection patterns incl. delimiter/exfiltration attacks), adversarial input detection, model drift monitoring with output distribution tracking (Jensen-Shannon divergence), model supply chain attack detection (slopsquatting, unsigned models) | 4 |
-| 13 | **Quantum-Ready Crypto** | Crypto inventory, PQC migration readiness, TLS auditing, cert expiry, HNDL attack detection | 5 |
+| 13 | **Quantum-Ready Crypto** | Crypto inventory with explicit unknown assessments, PQC migration readiness, TLS auditing, cert expiry, reported classical traffic-capture risk. Does not re-encrypt applications or prove HNDL intent. | 5 |
 | 14 | **Runtime Watcher** | FIM, container escape, LOLBin detection (40+), memory injection (process hollowing, DLL injection), persistence mechanisms, UEFI/bootkit, fileless malware, symlink privilege escalation, ETW/logging evasion, Lua shellcode loader detection | 6 |
 | 15 | **Cloud Posture Manager** | Config drift, misconfiguration (public buckets, open SGs, wildcard IAM), secrets sprawl, Kubernetes RBAC auditing, container posture checks, KSPM | 6 |
 | 16 | **AI Analysis Engine** | Two-tier Gemini pipeline: Flash Lite for triage, Flash for deep classification and cross-module correlation | X |
 | — | **Threat Correlator** | Cross-module attack chain detection — automatically correlates alerts from multiple modules targeting the same source IP into unified incident alerts. 9 pre-defined attack chains (kill chain, credential→lateral, injection→persistence, etc.) | Core |
 
 ---
+
+Media screening and ransomware response require the right telemetry. See the [detection reliability update](docs/security-updates/2026-10-23-detection-reliability.md) for accepted formats, process attribution, entropy baselines, enforcement behavior, and tested limits.
 
 ## CLI Reference
 

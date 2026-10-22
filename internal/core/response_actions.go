@@ -260,6 +260,11 @@ type KillProcessExecutor struct{}
 func (e *KillProcessExecutor) Validate(rule ResponseRule) error { return nil }
 
 func (e *KillProcessExecutor) Execute(ctx context.Context, alert *Alert, rule ResponseRule, logger zerolog.Logger) (string, string, error) {
+	if host, _ := alert.Metadata["process_host"].(string); host != "" {
+		if err := validateLocalProcessHost(host); err != nil {
+			return "", "", err
+		}
+	}
 	pid, _ := alert.Metadata["process_id"].(string)
 	procName, _ := alert.Metadata["process_name"].(string)
 
@@ -309,6 +314,30 @@ func (e *KillProcessExecutor) Execute(ctx context.Context, alert *Alert, rule Re
 	return target, details, nil
 }
 
+// A PID reported by a remote sensor must never target an unrelated local process.
+// Compare local identities directly; resolving arbitrary hostnames can redirect us.
+func validateLocalProcessHost(host string) error {
+	if local, err := os.Hostname(); err == nil && strings.EqualFold(host, local) {
+		return nil
+	}
+	ip := net.ParseIP(host)
+	if ip != nil {
+		if ip.IsLoopback() {
+			return nil
+		}
+		addresses, err := net.InterfaceAddrs()
+		if err == nil {
+			for _, address := range addresses {
+				local, _, err := net.ParseCIDR(address.String())
+				if err == nil && ip.Equal(local) {
+					return nil
+				}
+			}
+		}
+	}
+	return fmt.Errorf("process host %q is not local; route response to an executor on the reporting host", host)
+}
+
 // ---------------------------------------------------------------------------
 // QuarantineFileExecutor — moves a suspicious file to quarantine directory
 // ---------------------------------------------------------------------------
@@ -318,6 +347,11 @@ type QuarantineFileExecutor struct{}
 func (e *QuarantineFileExecutor) Validate(rule ResponseRule) error { return nil }
 
 func (e *QuarantineFileExecutor) Execute(ctx context.Context, alert *Alert, rule ResponseRule, logger zerolog.Logger) (string, string, error) {
+	if host, _ := alert.Metadata["process_host"].(string); host != "" {
+		if err := validateLocalProcessHost(host); err != nil {
+			return "", "", err
+		}
+	}
 	filePath, _ := alert.Metadata["file_path"].(string)
 	if filePath == "" {
 		return "", "", fmt.Errorf("no file_path in alert metadata")

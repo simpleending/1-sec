@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -13,6 +15,8 @@ import (
 )
 
 const ModuleName = "ransomware"
+
+var rawDiskTarget = regexp.MustCompile(`(?i)^(?:/dev/(?:sd[a-z]+|hd[a-z]+|vd[a-z]+|xvd[a-z]+|nvme[0-9]+n[0-9]+|mmcblk[0-9]+|loop[0-9]+|md[0-9]+|dm-[0-9]+)|\\\\\.\\physicaldrive[0-9]+)$`)
 
 // Interceptor is the Ransomware Interceptor module providing encryption detection,
 // canary file monitoring, data exfiltration detection, wiper detection, shadow copy
@@ -155,20 +159,52 @@ func (i *Interceptor) handleFileActivity(event *core.SecurityEvent) {
 		return
 	}
 
-	result := i.fileTracker.RecordModification(processName, path, entropy)
+	// Scope file activity to the reporting host and process instance when supplied.
+	host := getStringDetail(event, "host_id")
+	if host == "" {
+		host = event.SourceIP
+	}
+	if host == "" {
+		host = event.Source
+	}
+	process := processName
+	if pid := processID(event); pid != "" {
+		process = "pid:" + pid
+	}
+	if process == "" || path == "" {
+		return // Missing attribution must not pool unrelated file changes.
+	}
+	key := fmt.Sprintf("%q/%q", host, process)
+	if started := getStringDetail(event, "process_start_time"); started != "" {
+		key += fmt.Sprintf("/%q", started)
+	}
+	before, hasBefore := event.Details["entropy_before"]
+	transition := false
+	if hasBefore {
+		switch before.(type) {
+		case int, float64:
+			previous := getFloatDetail(event, "entropy_before")
+			transition = previous >= 0 && previous <= 8 && entropy <= 8 && entropy-previous >= 1
+		}
+	}
+	result := i.fileTracker.recordActivity(key, path, entropy, event.Type == "file_renamed", transition)
 
 	if result.MassEncryption {
-		i.raiseAlert(event, core.SeverityCritical,
+		severity := core.SeverityHigh
+		if result.EncryptionTransitions >= i.fileTracker.encryptionThreshold {
+			severity = core.SeverityCritical
+		}
+		i.raiseAlert(event, severity,
 			"Mass File Encryption Detected [T1486]",
-			fmt.Sprintf("Process %s has modified %d files in %s with high entropy (avg: %.2f). Strongly indicates ransomware activity. MITRE ATT&CK T1486: Data Encrypted for Impact.",
-				processName, result.FileCount, result.Duration.String(), result.AvgEntropy),
+			fmt.Sprintf("Process %s has modified %d files in %s with high entropy (avg: %.2f); %d files have reported entropy increases of at least 1 bit/byte. Compression and authorized encryption can also cause this. MITRE ATT&CK T1486: possible Data Encrypted for Impact.",
+				processName, result.FileCount, result.Duration.String(), result.AvgEntropy, result.EncryptionTransitions),
 			"mass_encryption")
 	}
 
 	if result.HighEntropy {
-		i.raiseAlert(event, core.SeverityHigh,
+		i.raiseAlert(event, core.SeverityMedium,
 			"High Entropy File Modification [T1486]",
-			fmt.Sprintf("File %s modified with entropy %.2f by process %s. High entropy suggests encryption. MITRE ATT&CK T1486.",
+			fmt.Sprintf("File %s modified with entropy %.2f by process %s. Compression and legitimate encryption can produce high entropy; verify context. MITRE ATT&CK T1486.",
 				path, entropy, processName),
 			"high_entropy")
 	}
@@ -456,33 +492,49 @@ func (i *Interceptor) handleWiperActivity(event *core.SecurityEvent) {
 		wiperType = event.Type
 	}
 
-	i.wiperTracker.RecordEvent(event.SourceIP, processName, wiperType)
-
-	// MBR/GPT overwrites are always critical — offset 0 on a physical drive is the MBR.
-	// Active response: immediately kill the responsible process and block the source.
-	if event.Type == "mbr_write" || writeOffset == 0 {
+	// Missing or malformed offsets must not become an asserted boot-sector write.
+	offsetValue := event.Details["offset"]
+	hasOffset := false
+	switch value := offsetValue.(type) {
+	case int:
+		hasOffset = value >= 0
+	case float64:
+		hasOffset = value >= 0 && !math.IsInf(value, 0) && value == math.Trunc(value)
+	default:
+		hasOffset = false
+	}
+	rawDisk := rawDiskTarget.MatchString(target)
+	if event.Type == "disk_write" && (!rawDisk || !hasOffset) {
+		return
+	}
+	if event.Type == "mbr_write" || (event.Type == "disk_write" && rawDisk && hasOffset && writeOffset == 0) {
 		i.raiseAlert(event, core.SeverityCritical,
 			"MBR/GPT Overwrite Detected [T1561.002]",
-			fmt.Sprintf("Master Boot Record or GPT overwrite detected. Process: %s, Target: %s, Bytes: %d, Offset: %d. MITRE ATT&CK T1561.002: Disk Structure Wipe. System will be unbootable. ACTIVE RESPONSE: kill_process + block_ip triggered.",
+			fmt.Sprintf("Boot-sector write reported. Process: %s, Target: %s, Bytes: %d, Offset: %d. MITRE ATT&CK T1561.002: possible Disk Structure Wipe. Verify authorized disk maintenance. Response depends on enforcement policy and mode.",
 				processName, target, bytesWritten, writeOffset),
 			"mbr_overwrite")
-		i.emitResponseAction(event, processName)
 		return
 	}
 
-	// Partition table destruction — active response: kill + block
+	// Explicit partition telemetry is routed through the ordinary response policy.
 	if event.Type == "partition_write" {
 		i.raiseAlert(event, core.SeverityCritical,
 			"Partition Table Destruction [T1561.002]",
-			fmt.Sprintf("Partition table modification detected. Process: %s, Target: %s, Bytes: %d. MITRE ATT&CK T1561.002: Disk Structure Wipe. ACTIVE RESPONSE: kill_process + block_ip triggered.",
+			fmt.Sprintf("Partition table modification reported. Process: %s, Target: %s, Bytes: %d. MITRE ATT&CK T1561.002: possible Disk Structure Wipe. Response depends on enforcement policy and mode.",
 				processName, target, bytesWritten),
 			"partition_destroy")
-		i.emitResponseAction(event, processName)
 		return
 	}
 
 	// Check for zero-fill or random-fill wipe patterns
 	pattern := getStringDetail(event, "write_pattern")
+	if pattern == "" && (wiperType == "zero_fill" || wiperType == "random_fill") {
+		pattern = wiperType
+	}
+	if event.Type == "disk_write" && pattern != "zero_fill" && pattern != "random_fill" {
+		return
+	}
+	i.wiperTracker.RecordEvent(event.SourceIP, processName, wiperType)
 	severity := core.SeverityCritical
 	title := "Disk Wipe Activity Detected [T1561.001]"
 	desc := fmt.Sprintf("Disk wipe activity detected. Type: %s, Process: %s, Target: %s, Bytes written: %d",
@@ -499,43 +551,13 @@ func (i *Interceptor) handleWiperActivity(event *core.SecurityEvent) {
 	// Track cumulative wipe activity — escalate to active response on rapid wiping
 	stats := i.wiperTracker.GetStats(event.SourceIP)
 	if stats.EventCount > 3 {
-		desc += fmt.Sprintf(" ESCALATION: %d wipe events from this host in %s — coordinated destruction campaign. ACTIVE RESPONSE: kill_process + block_ip triggered.",
+		desc += fmt.Sprintf(" ESCALATION: %d wipe events from this host in %s. Response depends on enforcement policy and mode.",
 			stats.EventCount, stats.Duration.String())
 		i.raiseAlert(event, severity, title, desc, "wiper_activity")
-		i.emitResponseAction(event, processName)
 		return
 	}
 
 	i.raiseAlert(event, severity, title, desc, "wiper_activity")
-}
-
-// emitResponseAction publishes kill_process and block_ip response events for
-// confirmed destructive activity (wipers, MBR overwrites, partition destruction).
-func (i *Interceptor) emitResponseAction(event *core.SecurityEvent, processName string) {
-	if i.bus == nil {
-		return
-	}
-	// Emit kill_process
-	killEvent := core.NewSecurityEvent(ModuleName, "response_action", core.SeverityCritical,
-		fmt.Sprintf("Kill process %s — confirmed wiper/destructive activity", processName))
-	killEvent.SourceIP = event.SourceIP
-	killEvent.Details["action"] = string(core.ActionKillProcess)
-	killEvent.Details["process_name"] = processName
-	killEvent.Details["reason"] = "wiper_active_response"
-	killEvent.Details["original_event_id"] = event.ID
-	_ = i.bus.PublishEvent(killEvent)
-
-	// Emit block_ip
-	if event.SourceIP != "" {
-		blockEvent := core.NewSecurityEvent(ModuleName, "response_action", core.SeverityCritical,
-			fmt.Sprintf("Block IP %s — confirmed wiper/destructive activity", event.SourceIP))
-		blockEvent.SourceIP = event.SourceIP
-		blockEvent.Details["action"] = string(core.ActionBlockIP)
-		blockEvent.Details["duration"] = "24h"
-		blockEvent.Details["reason"] = "wiper_active_response"
-		blockEvent.Details["original_event_id"] = event.ID
-		_ = i.bus.PublishEvent(blockEvent)
-	}
 }
 
 // checkCompoundAttack detects when multiple pre-ransomware indicators fire together,
@@ -724,6 +746,27 @@ func (i *Interceptor) raiseAlert(event *core.SecurityEvent, severity core.Severi
 	}
 
 	alert := core.NewAlert(newEvent, title, description)
+	alert.EventIDs = append(alert.EventIDs, event.ID)
+	alert.Metadata["original_event_id"] = event.ID
+	processHost := getStringDetail(event, "hostname")
+	if processHost == "" {
+		processHost = event.SourceIP
+	}
+	if processHost == "" {
+		processHost = getStringDetail(event, "host_id")
+	}
+	if processHost != "" {
+		alert.Metadata["process_host"] = processHost
+	}
+	if name := getStringDetail(event, "process_name"); name != "" {
+		alert.Metadata["process_name"] = name
+	}
+	if pid := processID(event); pid != "" {
+		alert.Metadata["process_id"] = pid
+	}
+	if path := getStringDetail(event, "path"); path != "" {
+		alert.Metadata["file_path"] = path
+	}
 	alert.Mitigations = getRansomwareMitigations(alertType)
 	if i.pipeline != nil {
 		i.pipeline.Process(alert)
@@ -996,8 +1039,9 @@ type FileActivityTracker struct {
 }
 
 type processFileActivity struct {
-	modifiedFiles map[string]bool
-	renamedFiles  int
+	modifiedFiles map[string]float64
+	renamedFiles  map[string]bool
+	transitions   map[string]bool
 	totalEntropy  float64
 	entropyCount  int
 	firstSeen     time.Time
@@ -1005,16 +1049,20 @@ type processFileActivity struct {
 }
 
 type ActivityResult struct {
-	MassEncryption bool
-	HighEntropy    bool
-	RapidRename    bool
-	FileCount      int
-	RenameCount    int
-	AvgEntropy     float64
-	Duration       time.Duration
+	MassEncryption        bool
+	HighEntropy           bool
+	RapidRename           bool
+	FileCount             int
+	RenameCount           int
+	AvgEntropy            float64
+	Duration              time.Duration
+	EncryptionTransitions int
 }
 
 func NewFileActivityTracker(threshold int) *FileActivityTracker {
+	if threshold <= 0 {
+		threshold = 5
+	}
 	return &FileActivityTracker{
 		processActivity:     make(map[string]*processFileActivity),
 		encryptionThreshold: threshold,
@@ -1022,30 +1070,53 @@ func NewFileActivityTracker(threshold int) *FileActivityTracker {
 }
 
 func (ft *FileActivityTracker) RecordModification(process, path string, entropy float64) ActivityResult {
+	return ft.recordActivity(process, path, entropy, isRansomwareExtension(path), false)
+}
+
+func (ft *FileActivityTracker) recordActivity(process, path string, entropy float64, renamed, transitioned bool) ActivityResult {
 	ft.mu.Lock()
 	defer ft.mu.Unlock()
 
 	result := ActivityResult{}
+	if process == "" || path == "" {
+		return result
+	}
 	now := time.Now()
 
 	activity, exists := ft.processActivity[process]
-	if !exists || now.Sub(activity.lastSeen) > 5*time.Minute {
+	if !exists || now.Sub(activity.firstSeen) >= 5*time.Minute {
 		activity = &processFileActivity{
-			modifiedFiles: make(map[string]bool),
+			modifiedFiles: make(map[string]float64),
+			renamedFiles:  make(map[string]bool),
+			transitions:   make(map[string]bool),
 			firstSeen:     now,
 		}
 		ft.processActivity[process] = activity
 	}
 
-	activity.modifiedFiles[path] = true
 	activity.lastSeen = now
 
+	// Keep one current entropy sample per distinct file, not one vote per write.
+	if previous, ok := activity.modifiedFiles[path]; ok && previous > 0 {
+		activity.totalEntropy -= previous
+		activity.entropyCount--
+	}
+	if math.IsNaN(entropy) || math.IsInf(entropy, 0) || entropy < 0 || entropy > 8 {
+		entropy = 0
+	}
+	activity.modifiedFiles[path] = entropy
+	if entropy > 7 && transitioned {
+		activity.transitions[path] = true
+	} else {
+		delete(activity.transitions, path)
+	}
 	if entropy > 0 {
 		activity.totalEntropy += entropy
 		activity.entropyCount++
 	}
 
 	result.FileCount = len(activity.modifiedFiles)
+	result.EncryptionTransitions = len(activity.transitions)
 	result.Duration = now.Sub(activity.firstSeen)
 
 	if activity.entropyCount > 0 {
@@ -1058,16 +1129,16 @@ func (ft *FileActivityTracker) RecordModification(process, path string, entropy 
 	}
 
 	// Mass encryption: many files modified with high average entropy
-	if result.FileCount >= ft.encryptionThreshold && result.AvgEntropy > 7.0 {
+	if activity.entropyCount >= ft.encryptionThreshold && result.AvgEntropy > 7.0 {
 		result.MassEncryption = true
 	}
 
 	// Rapid rename detection
-	if strings.Contains(strings.ToLower(path), "renamed") || isRansomwareExtension(path) {
-		activity.renamedFiles++
+	if renamed {
+		activity.renamedFiles[path] = true
 	}
-	result.RenameCount = activity.renamedFiles
-	if activity.renamedFiles > 5 && result.Duration < 2*time.Minute {
+	result.RenameCount = len(activity.renamedFiles)
+	if result.RenameCount > 5 && result.Duration < 2*time.Minute {
 		result.RapidRename = true
 	}
 
@@ -1268,6 +1339,36 @@ func getStringDetail(event *core.SecurityEvent, key string) string {
 		return val
 	}
 	return ""
+}
+
+// processID preserves valid numeric or string collector PIDs for response executors.
+func processID(event *core.SecurityEvent) string {
+	value := event.Details["process_id"]
+	if value == nil {
+		value = event.Details["pid"]
+	}
+	var pid int64
+	switch v := value.(type) {
+	case string:
+		parsed, err := strconv.ParseInt(v, 10, 32)
+		if err != nil {
+			return ""
+		}
+		pid = parsed
+	case int:
+		pid = int64(v)
+	case int64:
+		pid = v
+	case float64:
+		if math.IsNaN(v) || math.IsInf(v, 0) || v != math.Trunc(v) || v > math.MaxInt32 {
+			return ""
+		}
+		pid = int64(v)
+	}
+	if pid <= 0 || pid > math.MaxInt32 {
+		return ""
+	}
+	return strconv.FormatInt(pid, 10)
 }
 
 func getIntDetail(event *core.SecurityEvent, key string) int {

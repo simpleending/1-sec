@@ -42,7 +42,7 @@ func (m *Monitor) EventTypes() []string {
 	}
 }
 func (m *Monitor) Description() string {
-	return "Cryptographic inventory scanning, post-quantum migration assessment, crypto-agility framework, TLS configuration auditing, and harvest-now-decrypt-later detection"
+	return "Cryptographic inventory, post-quantum migration assessment, TLS configuration auditing, and capture telemetry risk indicators; does not migrate encryption or prove interception intent"
 }
 
 func (m *Monitor) Start(ctx context.Context, bus *core.EventBus, pipeline *core.AlertPipeline, cfg *core.Config) error {
@@ -110,16 +110,19 @@ func (m *Monitor) handleTLSEvent(event *core.SecurityEvent) {
 		proposedCurves = getStringDetail(event, "proposed_curves")
 	}
 	if proposedCurves != "" {
-		curvesLower := strings.ToLower(proposedCurves)
-		hasPQ := strings.Contains(curvesLower, "mlkem") || strings.Contains(curvesLower, "kyber") ||
-			strings.Contains(curvesLower, "x25519mlkem") || strings.Contains(curvesLower, "secp256r1mlkem")
-		hasClassical := strings.Contains(curvesLower, "x25519") || strings.Contains(curvesLower, "secp256r1") ||
-			strings.Contains(curvesLower, "secp384r1") || strings.Contains(curvesLower, "secp521r1")
+		hasPQ, hasClassical := false, false
+		for _, group := range strings.FieldsFunc(proposedCurves, func(r rune) bool {
+			return r == ',' || r == ':' || r == ';' || r == ' ' || r == '[' || r == ']' || r == '"'
+		}) {
+			group = strings.ToLower(group)
+			hasPQ = hasPQ || isPQKeyExchange(group)
+			hasClassical = hasClassical || isClassicalKeyExchange(group)
+		}
 		if hasClassical && !hasPQ {
 			m.raiseAlert(event, core.SeverityInfo,
 				"TLS Handshake Without PQ Curves",
 				fmt.Sprintf("TLS handshake to %s proposes only classical curves (%s) without any post-quantum "+
-					"hybrid groups. This infrastructure is vulnerable to harvest-now-decrypt-later attacks. "+
+					"recognized hybrid groups. This describes offered capabilities, not the negotiated exchange. "+
 					"Consider adding X25519MLKEM768 to supported groups.",
 					serverName, proposedCurves),
 				"no_pq_curves",
@@ -319,6 +322,7 @@ type InventorySummary struct {
 	LastSeen       time.Time
 	UsageCount     int
 	QuantumSafe    bool
+	Assessment     string // recognized_pqc, symmetric, classical, unknown; not a security certification
 	Recommendation string
 }
 
@@ -361,6 +365,14 @@ func (ci *CryptoInventory) Summary() []InventorySummary {
 			comps = append(comps, c)
 		}
 		vuln := classifyQuantumVulnerability(e.Algorithm, 0, e.Purpose)
+		assessment := "unknown"
+		if vuln.KnownPQ {
+			assessment = "recognized_pqc"
+		} else if vuln.Resistant {
+			assessment = "symmetric"
+		} else if vuln.Vulnerable {
+			assessment = "classical"
+		}
 		out = append(out, InventorySummary{
 			Purpose:        e.Purpose,
 			Algorithm:      e.Algorithm,
@@ -368,7 +380,8 @@ func (ci *CryptoInventory) Summary() []InventorySummary {
 			FirstSeen:      e.FirstSeen,
 			LastSeen:       e.LastSeen,
 			UsageCount:     e.UsageCount,
-			QuantumSafe:    !vuln.Vulnerable,
+			QuantumSafe:    vuln.KnownPQ || vuln.Resistant,
+			Assessment:     assessment,
 			Recommendation: vuln.Recommendation,
 		})
 	}
@@ -382,12 +395,11 @@ func (ci *CryptoInventory) Summary() []InventorySummary {
 
 // TLSAuditor checks TLS configurations for security issues.
 type TLSAuditor struct {
-	insecureCiphers    *regexp.Regexp // truly broken: RC4, DES, NULL, EXPORT, anon, MD5
-	deprecatedCiphers  *regexp.Regexp // weaker but not broken: CBC mode
-	weakVersions       map[string]bool
-	legacyVersions     map[string]bool // TLS 1.2 — not weak but legacy
-	weakKeyExchange    map[string]bool
-	hybridKeyExchanges map[string]bool // PQ hybrid key exchanges
+	insecureCiphers   *regexp.Regexp // truly broken: RC4, DES, NULL, EXPORT, anon, MD5
+	deprecatedCiphers *regexp.Regexp // weaker but not broken: CBC mode
+	weakVersions      map[string]bool
+	legacyVersions    map[string]bool // TLS 1.2 — not weak but legacy
+	weakKeyExchange   map[string]bool
 }
 
 type TLSFinding struct {
@@ -414,15 +426,6 @@ func NewTLSAuditor() *TLSAuditor {
 		},
 		weakKeyExchange: map[string]bool{
 			"RSA": true, "DHE-1024": true, "DH-1024": true,
-		},
-		// Fix #2: recognized PQ hybrid key exchanges
-		hybridKeyExchanges: map[string]bool{
-			"X25519MLKEM768":    true,
-			"x25519mlkem768":    true,
-			"SecP256r1MLKEM768": true,
-			"secp256r1mlkem768": true,
-			"X25519Kyber768":    true,
-			"x25519kyber768":    true,
 		},
 	}
 }
@@ -500,7 +503,7 @@ func (ta *TLSAuditor) Audit(version, cipherSuite, keyExchange string) []TLSFindi
 	}
 
 	// Fix #2: recommend hybrid PQ key exchange when not already using one
-	if keyExchange != "" && !ta.hybridKeyExchanges[keyExchange] && !ta.weakKeyExchange[keyExchange] {
+	if isClassicalKeyExchange(keyExchange) && !ta.weakKeyExchange[keyExchange] {
 		// Using a classical ephemeral exchange (e.g., X25519, ECDHE) — good but not PQ-safe
 		findings = append(findings, TLSFinding{
 			Title:       "No Post-Quantum Key Exchange",
@@ -511,6 +514,15 @@ func (ta *TLSAuditor) Audit(version, cipherSuite, keyExchange string) []TLSFindi
 				"Upgrade to a hybrid PQ/classical key exchange such as X25519MLKEM768",
 				"Hybrid key exchange protects against harvest-now-decrypt-later while maintaining classical security",
 			},
+		})
+	}
+	if keyExchange != "" && !isClassicalKeyExchange(keyExchange) && !isPQKeyExchange(keyExchange) {
+		findings = append(findings, TLSFinding{
+			Title:       "Unrecognized Key Exchange",
+			Description: fmt.Sprintf("Key exchange %s is not in the recognized algorithm set; quantum resistance has not been assessed", keyExchange),
+			Severity:    core.SeverityInfo,
+			AlertType:   "unknown_key_exchange",
+			Mitigations: []string{"Report the exact negotiated group name and review its specification and implementation"},
 		})
 	}
 
@@ -524,6 +536,8 @@ func (ta *TLSAuditor) Audit(version, cipherSuite, keyExchange string) []TLSFindi
 
 type quantumVuln struct {
 	Vulnerable     bool
+	KnownPQ        bool
+	Resistant      bool
 	Severity       core.Severity
 	Recommendation string
 }
@@ -550,11 +564,8 @@ func classifyQuantumVulnerability(algorithm string, keySize int, purpose string)
 		"slh-dsa-sha2-128s": true, "slh-dsa-sha2-128f": true,
 		"slh-dsa-sha2-192s": true, "slh-dsa-sha2-192f": true,
 		"slh-dsa-sha2-256s": true, "slh-dsa-sha2-256f": true,
-		// Legacy names still in common use for the finalized algorithms
-		"kyber": true, "dilithium": true, "sphincs+": true,
 		// Hybrid PQ/classical schemes
 		"x25519mlkem768": true, "secp256r1mlkem768": true,
-		"x25519kyber768": true,
 	}
 
 	// Algorithms not yet finalized — recognized but flagged as draft
@@ -565,11 +576,11 @@ func classifyQuantumVulnerability(algorithm string, keySize int, purpose string)
 	}
 
 	if pqcSafe[algoLower] {
-		return quantumVuln{Vulnerable: false}
+		return quantumVuln{KnownPQ: true}
 	}
 
 	if pqcDraft[algoLower] {
-		return quantumVuln{Vulnerable: false}
+		return quantumVuln{Recommendation: "Review the exact algorithm revision and parameter set; this name is not in the recognized finalized PQC set."}
 	}
 
 	// Fix #5: exact match on normalized algorithm names for quantum-broken detection.
@@ -606,23 +617,21 @@ func classifyQuantumVulnerability(algorithm string, keySize int, purpose string)
 		}
 	}
 
-	// Symmetric algorithms: quantum reduces security by half (Grover's algorithm)
-	symmetricAlgos := map[string]bool{
-		"aes": true, "chacha20": true, "aes-gcm": true, "aes-cbc": true,
-		"aes-128": true, "aes-256": true, "aes-192": true,
-		"chacha20-poly1305": true,
+	// NIST does not classify AES-128 as broken by practical Grover attacks.
+	// Recognize complete symmetric names; a TLS 1.3 suite alone says nothing
+	// about the connection's negotiated key establishment.
+	symmetricSize := map[string]int{
+		"aes-128": 128, "aes-128-gcm": 128, "aes-128-cbc": 128,
+		"aes-192": 192, "aes-192-gcm": 192, "aes-192-cbc": 192,
+		"aes-256": 256, "aes-256-gcm": 256, "aes-256-cbc": 256,
+		"chacha20": 256, "chacha20-poly1305": 256,
 	}
-	for _, part := range append(parts, algoLower) {
-		if symmetricAlgos[part] {
-			if keySize > 0 && keySize < 256 {
-				return quantumVuln{
-					Vulnerable:     true,
-					Severity:       core.SeverityLow,
-					Recommendation: fmt.Sprintf("Increase %s key size to 256-bit for quantum resistance (Grover's algorithm halves effective security).", algorithm),
-				}
-			}
-			return quantumVuln{Vulnerable: false}
-		}
+	if size := symmetricSize[algoLower]; size > 0 && (keySize == 0 || keySize == size) {
+		return quantumVuln{Resistant: true}
+	}
+	if (algoLower == "aes" || algoLower == "aes-gcm" || algoLower == "aes-cbc") &&
+		(keySize == 128 || keySize == 192 || keySize == 256) {
+		return quantumVuln{Resistant: true}
 	}
 
 	return quantumVuln{Vulnerable: false}
@@ -709,12 +718,12 @@ func (m *Monitor) handleHNDLEvent(event *core.SecurityEvent) {
 	result := m.hndlDet.Analyze(sourceIP, destIP, bytesTransferred, protocol, cipherSuite, keyExchange, captureType)
 
 	if result.HNDLSuspected {
-		m.raiseAlert(event, core.SeverityCritical,
+		m.raiseAlert(event, core.SeverityHigh,
 			"Harvest-Now-Decrypt-Later Attack Suspected",
 			fmt.Sprintf("Bulk encrypted traffic capture detected from %s to %s. "+
 				"Volume: %s in %s. Cipher: %s (key exchange: %s). "+
-				"Traffic is using quantum-vulnerable encryption and is being captured at scale. "+
-				"Nation-state actors collect encrypted data now to decrypt with future quantum computers. "+
+				"Reported capture includes classical key establishment at scale. "+
+				"This is an investigation signal; telemetry cannot establish authorization, adversary intent, or future decryption. "+
 				"Indicators: %s.",
 				sourceIP, destIP, result.VolumeStr, result.TimeWindow,
 				cipherSuite, keyExchange, strings.Join(result.Indicators, ", ")),
@@ -753,14 +762,12 @@ type HNDLDetector struct {
 }
 
 type hndlProfile struct {
-	destinations map[string]int64 // destIP -> bytes
-	totalBytes   int64
-	ciphers      map[string]int
-	keyExchanges map[string]int
-	captureTypes map[string]int
-	eventCount   int
-	windowStart  time.Time
-	lastSeen     time.Time
+	destinations          map[string]int64 // destIP -> bytes
+	totalBytes            int64
+	classicalCaptureBytes int64
+	eventCount            int
+	windowStart           time.Time
+	lastSeen              time.Time
 }
 
 type HNDLResult struct {
@@ -780,6 +787,9 @@ func (h *HNDLDetector) Analyze(sourceIP, destIP string, bytes int, protocol, cip
 	defer h.mu.Unlock()
 
 	result := HNDLResult{}
+	if sourceIP == "" || bytes <= 0 || !isPassiveCapture(captureType) {
+		return result
+	}
 	now := time.Now()
 
 	profile, exists := h.captures[sourceIP]
@@ -787,9 +797,6 @@ func (h *HNDLDetector) Analyze(sourceIP, destIP string, bytes int, protocol, cip
 	if !exists || now.Sub(profile.windowStart) > 24*time.Hour {
 		profile = &hndlProfile{
 			destinations: make(map[string]int64),
-			ciphers:      make(map[string]int),
-			keyExchanges: make(map[string]int),
-			captureTypes: make(map[string]int),
 			windowStart:  now,
 		}
 		h.captures[sourceIP] = profile
@@ -797,18 +804,22 @@ func (h *HNDLDetector) Analyze(sourceIP, destIP string, bytes int, protocol, cip
 
 	profile.lastSeen = now
 	profile.totalBytes += int64(bytes)
+	// Count classical capture bytes from the same observation. TLS 1.3 cipher
+	// suites do not identify key establishment (RFC 8446 section 4.1.2).
+	classical := isClassicalKeyExchange(keyExchange)
+	if keyExchange == "" {
+		for _, part := range splitAlgorithmName(strings.ToLower(cipher)) {
+			if part == "rsa" || part == "ecdhe" || part == "ecdh" || part == "dhe" || part == "dh" {
+				classical = true
+			}
+		}
+	}
+	if classical {
+		profile.classicalCaptureBytes += int64(bytes)
+	}
 	profile.eventCount++
 	if destIP != "" {
 		profile.destinations[destIP] += int64(bytes)
-	}
-	if cipher != "" {
-		profile.ciphers[cipher]++
-	}
-	if keyExchange != "" {
-		profile.keyExchanges[keyExchange]++
-	}
-	if captureType != "" {
-		profile.captureTypes[captureType]++
 	}
 
 	result.VolumeStr = formatBytes(profile.totalBytes)
@@ -827,29 +838,17 @@ func (h *HNDLDetector) Analyze(sourceIP, destIP string, bytes int, protocol, cip
 	}
 
 	// Quantum-vulnerable ciphers being captured
-	quantumVulnCiphers := 0
-	for c := range profile.ciphers {
-		cLower := strings.ToLower(c)
-		if strings.Contains(cLower, "rsa") || strings.Contains(cLower, "ecdh") ||
-			strings.Contains(cLower, "ecdsa") || strings.Contains(cLower, "dhe") {
-			quantumVulnCiphers++
-		}
-	}
-	if quantumVulnCiphers > 0 {
-		indicators = append(indicators, "quantum-vulnerable ciphers targeted")
+	if profile.classicalCaptureBytes > 0 {
+		indicators = append(indicators, fmt.Sprintf("reported classical key-establishment capture (%s)", formatBytes(profile.classicalCaptureBytes)))
 	}
 
-	// Passive capture indicators
-	if profile.captureTypes["mirror"] > 0 || profile.captureTypes["tap"] > 0 ||
-		profile.captureTypes["pcap"] > 0 || profile.captureTypes["span"] > 0 {
-		indicators = append(indicators, "passive network capture detected")
-	}
+	indicators = append(indicators, "passive network capture reported")
 
-	// HNDL: high volume + quantum-vulnerable + broad targeting
-	if len(indicators) >= 2 && profile.totalBytes > 100<<20 { // > 100 MB
+	// This is a capture-risk signal, not proof of an attacker's intent.
+	if profile.classicalCaptureBytes > 100<<20 { // > 100 MB of matching capture evidence
 		result.HNDLSuspected = true
-		result.Indicators = indicators
 	}
+	result.Indicators = indicators
 
 	// Bulk capture: any large-scale capture
 	if profile.totalBytes > 500<<20 && profile.eventCount > 100 { // > 500 MB, 100+ events
@@ -857,6 +856,31 @@ func (h *HNDLDetector) Analyze(sourceIP, destIP string, bytes int, protocol, cip
 	}
 
 	return result
+}
+
+func isPassiveCapture(captureType string) bool {
+	switch strings.ToLower(strings.TrimSpace(captureType)) {
+	case "mirror", "tap", "pcap", "span":
+		return true
+	}
+	return false
+}
+
+func isPQKeyExchange(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "x25519mlkem768", "secp256r1mlkem768", "secp384r1mlkem1024", "ml-kem-512", "ml-kem-768", "ml-kem-1024":
+		return true
+	}
+	return false
+}
+
+func isClassicalKeyExchange(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "rsa", "ecdh", "ecdhe", "dh", "dhe", "dhe-1024", "dh-1024", "x25519", "x448",
+		"secp256r1", "secp384r1", "secp521r1", "p-256", "p-384", "p-521":
+		return true
+	}
+	return false
 }
 
 // CleanupLoop — fix #7: extended cleanup cutoff from 2 hours to 72 hours.

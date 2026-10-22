@@ -1,6 +1,7 @@
 package deepfake
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"fmt"
@@ -53,7 +54,7 @@ func (s *Shield) EventTypes() []string {
 	}
 }
 func (s *Shield) Description() string {
-	return "Prosodic and spectral audio deepfake detection, MFCC trajectory analysis, phase coherence checks, ELA-based video forensics, AI-generated phishing detection with writing style analysis, expanded Unicode homoglyph and Punycode domain spoofing, and communication anomaly tracking"
+	return "Prosodic and MFCC audio anomaly screening on validated PCM, decoded image-frame statistics, phishing indicators, Punycode domain spoofing, and communication anomalies; media scores are uncalibrated heuristics"
 }
 
 func (s *Shield) Start(ctx context.Context, bus *core.EventBus, pipeline *core.AlertPipeline, cfg *core.Config) error {
@@ -103,7 +104,7 @@ func (s *Shield) HandleEvent(event *core.SecurityEvent) error {
 // ---------------------------------------------------------------------------
 
 // AudioAnalyzer performs statistical and prosodic analysis on raw audio data to
-// detect synthetic speech. Works on raw PCM bytes or any audio payload.
+// screen anomalies in mono 16-bit little-endian PCM at 16 kHz.
 type AudioAnalyzer struct{}
 
 func NewAudioAnalyzer() *AudioAnalyzer { return &AudioAnalyzer{} }
@@ -124,6 +125,8 @@ type AudioResult struct {
 	MFCCSmoothness float64
 	PhaseCoherence float64
 	Indicators     []string
+	AnalyzedBytes  int
+	Truncated      bool
 }
 
 // Analyze performs heuristic analysis on raw audio bytes.
@@ -132,11 +135,23 @@ type AudioResult struct {
 // (pitch, jitter, shimmer, HNR), MFCC trajectory smoothness, and phase coherence.
 func (a *AudioAnalyzer) Analyze(raw []byte) AudioResult {
 	result := AudioResult{}
+	// Bound the DFT/prosody work regardless of the uploaded recording length.
+	const maxBytes = 16000 * 2 // One second of PCM; not a whole-recording verdict.
+	if len(raw) > maxBytes {
+		raw = raw[:maxBytes]
+		result.Truncated = true
+	}
+	raw = raw[:len(raw)/2*2]
+	result.AnalyzedBytes = len(raw)
 	if len(raw) < 64 {
 		return result
 	}
 
-	// 1. Byte-level Shannon entropy — synthetic audio tends toward lower entropy
+	// Silence supplies no evidence of a synthetic speaker.
+	if silenceRatio(raw) > 0.95 {
+		return result
+	}
+	// 1. Byte-level entropy is a screening feature, not a speech authenticity test.
 	result.Entropy = byteEntropy(raw)
 	if result.Entropy < 5.0 {
 		result.Score += 0.20
@@ -880,12 +895,24 @@ type VideoResult struct {
 
 // Analyze performs heuristic analysis on raw video frame bytes.
 // Checks temporal consistency, frame entropy patterns, metadata anomalies,
-// and Error Level Analysis (ELA) for compression artifact detection.
+// and block entropy variation. This is not JPEG error level analysis.
 func (v *VideoAnalyzer) Analyze(frames [][]byte, metadata map[string]interface{}) VideoResult {
 	result := VideoResult{}
 
 	if len(frames) == 0 {
 		return result
+	}
+	if len(frames) >= 2 {
+		static := true
+		for _, frame := range frames[1:] {
+			if !bytes.Equal(frames[0], frame) {
+				static = false
+				break
+			}
+		}
+		if static {
+			return result // Slides, paused video, and still scenes are not deepfake evidence.
+		}
 	}
 
 	// 1. Frame entropy consistency
@@ -985,13 +1012,12 @@ func (v *VideoAnalyzer) Analyze(frames [][]byte, metadata map[string]interface{}
 		}
 	}
 
-	// 4. ELA-style analysis: compare entropy of sub-regions within frames
-	// Manipulated regions show different statistical properties than surrounding areas
+	// 4. Block entropy variation; these statistics do not establish manipulation.
 	if len(frames) > 0 && len(frames[0]) >= 256 {
 		elaScore := elaAnalysis(frames[0])
 		if elaScore > 0.7 {
 			result.Score += 0.15
-			result.Indicators = append(result.Indicators, fmt.Sprintf("ELA anomaly detected (score=%.3f)", elaScore))
+			result.Indicators = append(result.Indicators, fmt.Sprintf("block entropy variation (score=%.3f)", elaScore))
 		}
 	}
 
@@ -1001,8 +1027,7 @@ func (v *VideoAnalyzer) Analyze(frames [][]byte, metadata map[string]interface{}
 	return result
 }
 
-// elaAnalysis performs a simplified Error Level Analysis on frame bytes.
-// Divides the frame into blocks and checks for entropy variance anomalies.
+// elaAnalysis is a legacy name for a block entropy statistic, not JPEG ELA.
 func elaAnalysis(frame []byte) float64 {
 	blockSize := 64
 	if len(frame) < blockSize*4 {
@@ -1065,7 +1090,13 @@ func (s *Shield) handleAudioEvent(event *core.SecurityEvent) {
 	callerID := getStringDetail(event, "caller_id")
 	claimedIdentity := getStringDetail(event, "claimed_identity")
 
-	audioResult := s.audioAnal.Analyze(event.RawData)
+	pcm, err := audioPCM(event)
+	if err != nil {
+		s.raiseAlert(event, core.SeverityInfo, "Audio Screening Unavailable",
+			fmt.Sprintf("Audio authenticity was not assessed: %v. Unsupported input is not a clean result.", err), "audio_analysis_unavailable")
+		return
+	}
+	audioResult := s.audioAnal.Analyze(pcm)
 
 	metaScore := 0.0
 	sampleRate := getFloatDetail(event, "sample_rate")
@@ -1095,31 +1126,20 @@ func (s *Shield) handleAudioEvent(event *core.SecurityEvent) {
 	}
 
 	if totalScore >= 0.4 {
-		severity := core.SeverityMedium
-		if totalScore >= 0.7 {
-			severity = core.SeverityCritical
-		} else if totalScore >= 0.5 {
-			severity = core.SeverityHigh
-		}
-		s.raiseAlert(event, severity,
-			"Potential Deepfake Audio Detected",
-			fmt.Sprintf("Audio from %s (claiming to be %s) has synthetic indicators (score: %.2f). Indicators: %s",
-				callerID, claimedIdentity, totalScore, strings.Join(audioResult.Indicators, "; ")),
+		s.raiseAlert(event, core.SeverityMedium,
+			"Audio Anomalies Require Verification",
+			fmt.Sprintf("Audio from %s (claiming to be %s) has heuristic anomalies (uncalibrated score: %.2f). Analyzed %d PCM bytes; recording truncated: %t. This does not establish a deepfake. Indicators: %s",
+				callerID, claimedIdentity, totalScore, audioResult.AnalyzedBytes, audioResult.Truncated, strings.Join(audioResult.Indicators, "; ")),
 			"deepfake_audio")
 	}
 }
 
 func (s *Shield) handleVideoEvent(event *core.SecurityEvent) {
-	var frames [][]byte
-	if event.RawData != nil && len(event.RawData) > 0 {
-		frames = [][]byte{event.RawData}
-	}
-	if frameData, ok := event.Details["frames"].([]interface{}); ok {
-		for _, f := range frameData {
-			if bs, ok := f.([]byte); ok {
-				frames = append(frames, bs)
-			}
-		}
+	frames := decodedVideoFrames(event)
+	if len(frames) == 0 {
+		s.raiseAlert(event, core.SeverityInfo, "Video Screening Unavailable",
+			"No supported image frames were decoded. Supply JPEG/PNG frames up to 1920x1080 and 8 MiB each; encoded video containers require an upstream decoder. Authenticity was not assessed.", "video_analysis_unavailable")
+		return
 	}
 
 	videoResult := s.videoAnal.Analyze(frames, event.Details)
@@ -1141,15 +1161,9 @@ func (s *Shield) handleVideoEvent(event *core.SecurityEvent) {
 	}
 
 	if videoResult.Score >= 0.4 {
-		severity := core.SeverityMedium
-		if videoResult.Score >= 0.7 {
-			severity = core.SeverityCritical
-		} else if videoResult.Score >= 0.5 {
-			severity = core.SeverityHigh
-		}
-		s.raiseAlert(event, severity,
-			"Potential Deepfake Video Detected",
-			fmt.Sprintf("Video content has synthetic indicators (score: %.2f). Indicators: %s",
+		s.raiseAlert(event, core.SeverityMedium,
+			"Video Anomalies Require Verification",
+			fmt.Sprintf("Up to eight decoded image frames have heuristic anomalies (uncalibrated score: %.2f). Static scenes and legitimate editing can produce these signals; this does not establish a deepfake. Indicators: %s",
 				videoResult.Score, strings.Join(videoResult.Indicators, "; ")),
 			"deepfake_video")
 	}
