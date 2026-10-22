@@ -1028,7 +1028,7 @@ mod packet_util_tests {
     fn test_scan_deep_binary_signatures_exact_boundary_offset() {
         let mut data = vec![b'A'; 16_384 - 1];
         data.extend_from_slice(b"MZ");
-        data.extend_from_slice(&vec![b'B'; 64]);
+        data.extend_from_slice(&[b'B'; 64]);
 
         let anomalies = scan_deep_binary_signatures(&data);
         assert!(

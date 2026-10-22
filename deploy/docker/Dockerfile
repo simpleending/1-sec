@@ -1,5 +1,5 @@
 # ── Stage 1: Build Go binary ─────────────────────────────────────────────────
-FROM golang:1.26.3-alpine AS go-builder
+FROM golang:1.26.10-alpine AS go-builder
 
 RUN apk add --no-cache git ca-certificates tzdata
 

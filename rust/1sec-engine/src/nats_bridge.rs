@@ -419,6 +419,51 @@ mod tests {
     }
 
     #[test]
+    fn go_events_reach_the_scanner_and_legacy_events_still_work() {
+        let fixture = include_str!("../testdata/go_http_request.json");
+        let m = matcher();
+        for (wire, severity) in [
+            ("INFO", Severity::Info),
+            ("LOW", Severity::Low),
+            ("MEDIUM", Severity::Medium),
+            ("HIGH", Severity::High),
+            ("CRITICAL", Severity::Critical),
+        ] {
+            let json = fixture.replace("\"HIGH\"", &format!("\"{wire}\""));
+            let event: SecurityEvent = serde_json::from_str(&json).unwrap();
+            assert_eq!(event.severity, severity);
+            assert_eq!(event.source.service, "gateway");
+            assert_eq!(event.description, "XML request");
+            let fields = extract_scannable_fields(&event);
+            for normalized in [false, true] {
+                let result = scan_field_collection(&m, &event.id, &fields, normalized);
+                assert!(result
+                    .matches
+                    .iter()
+                    .any(|p| p.pattern_name == "deser_xml_entity"));
+            }
+            // Serialization retains the pre-existing Rust wire format.
+            let legacy = serde_json::to_string(&event).unwrap();
+            let decoded: SecurityEvent = serde_json::from_str(&legacy).unwrap();
+            assert_eq!(decoded.data, event.data);
+            assert_eq!(decoded.source.service, "gateway");
+            assert_eq!(decoded.severity, severity);
+        }
+        assert!(
+            serde_json::from_str::<SecurityEvent>(&fixture.replace("\"HIGH\"", "\"UNKNOWN\""))
+                .is_err()
+        );
+
+        let mut summary_only: serde_json::Value = serde_json::from_str(fixture).unwrap();
+        summary_only.as_object_mut().unwrap().remove("details");
+        summary_only["source"] = serde_json::json!("");
+        summary_only["summary"] = serde_json::json!("UNION SELECT password FROM users");
+        let event: SecurityEvent = serde_json::from_value(summary_only).unwrap();
+        let result = scan_field_collection(&m, &event.id, &extract_scannable_fields(&event), false);
+        assert!(result.matches.iter().any(|p| p.category == "sqli"));
+    }
+
+    #[test]
     fn large_fields_are_streamed_instead_of_skipped() {
         let m = matcher();
         let mut payload = "A".repeat(DIRECT_FIELD_SCAN_LIMIT + STREAM_SCAN_CHUNK_SIZE + 512);

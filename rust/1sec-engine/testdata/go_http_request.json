@@ -1,0 +1,1 @@
+{"id":"go-rust-contract","timestamp":"2026-10-23T00:00:00Z","source":"gateway","module":"injection_shield","type":"http_request","severity":"HIGH","summary":"XML request","details":{"body":"<!DOCTYPE foo PUBLIC \"identifier\" \"relative.dtd\"><foo/>"},"source_ip":"192.0.2.1"}

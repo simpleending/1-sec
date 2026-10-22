@@ -662,7 +662,7 @@ fn deserialization_patterns() -> Vec<PatternDef> {
             name: "deser_xml_entity",
             category: "deserialization",
             severity: Severity::High,
-            regex: r#"(?i)(<!ENTITY\s+|<!DOCTYPE\s+[^>]*\[|SYSTEM\s+["\x27]file://|SYSTEM\s+["\x27]http)"#,
+            regex: r#"(?i)(<!ENTITY\s+|<!DOCTYPE\s+[^>]*\[|<!DOCTYPE\s+[^>\[]*\s(?:SYSTEM|PUBLIC)\s+["\x27]|SYSTEM\s+["\x27]file://|SYSTEM\s+["\x27]http)"#,
             literals: &["<!ENTITY", "<!DOCTYPE", "SYSTEM"],
         },
         PatternDef {

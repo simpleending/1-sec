@@ -13,12 +13,35 @@ pub struct SecurityEvent {
     #[serde(rename = "type")]
     pub event_type: String,
     pub severity: Severity,
+    #[serde(deserialize_with = "deserialize_event_source")]
     pub source: EventSource,
+    #[serde(default, alias = "details")]
     pub data: serde_json::Value,
     #[serde(default)]
     pub tags: Vec<String>,
-    #[serde(default)]
+    #[serde(default, alias = "summary")]
     pub description: String,
+}
+
+// Go publishes a collector name; older sidecar events use a source object.
+fn deserialize_event_source<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<EventSource, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Source {
+        Name(String),
+        Structured(EventSource),
+    }
+    Ok(match Source::deserialize(deserializer)? {
+        Source::Name(service) => EventSource {
+            ip: String::new(),
+            port: 0,
+            hostname: String::new(),
+            service,
+        },
+        Source::Structured(source) => source,
+    })
 }
 
 /// Event source information.
@@ -38,10 +61,15 @@ pub struct EventSource {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
+    #[serde(alias = "INFO")]
     Info,
+    #[serde(alias = "LOW")]
     Low,
+    #[serde(alias = "MEDIUM")]
     Medium,
+    #[serde(alias = "HIGH")]
     High,
+    #[serde(alias = "CRITICAL")]
     Critical,
 }
 

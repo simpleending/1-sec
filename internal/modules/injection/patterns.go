@@ -141,7 +141,7 @@ func compilePatterns() []Pattern {
 		{Name: "deser_dotnet", Category: "deser", Severity: core.SeverityCritical,
 			Regex: regexp.MustCompile(`(?i)(BinaryFormatter|ObjectStateFormatter|SoapFormatter|LosFormatter|NetDataContractSerializer|TypeNameHandling|JavaScriptSerializer)`)},
 		{Name: "deser_xml_entity", Category: "deser", Severity: core.SeverityHigh,
-			Regex: regexp.MustCompile(`(?i)(<!ENTITY\s+|<!DOCTYPE\s+[^>]*\[|SYSTEM\s+["']file://|SYSTEM\s+["']http)`)},
+			Regex: regexp.MustCompile(`(?i)(<!ENTITY\s+|<!DOCTYPE\s+[^>]*\[|<!DOCTYPE\s+[^>\[]*\s(?:SYSTEM|PUBLIC)\s+["']|SYSTEM\s+["']file://|SYSTEM\s+["']http)`)},
 		{Name: "deser_php", Category: "deser", Severity: core.SeverityHigh,
 			Regex: regexp.MustCompile(`(?i)(O:\d+:"[^"]+"|a:\d+:\{|unserialize\s*\(|__wakeup|__destruct)`)},
 		{Name: "deser_python_pickle", Category: "deser", Severity: core.SeverityCritical,

@@ -166,7 +166,10 @@ impl PatternMatcher {
                     let matched_text = &field_value[m.start()..m.end()];
                     // Cap matched text to avoid huge payloads
                     let preview = if matched_text.len() > 200 {
-                        format!("{}...", &matched_text[..200])
+                        format!(
+                            "{}...",
+                            &matched_text[..matched_text.floor_char_boundary(200)]
+                        )
                     } else {
                         matched_text.to_string()
                     };
