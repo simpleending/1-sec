@@ -41,11 +41,13 @@ type TokenVaultConfig struct {
 
 // CloudConfig holds settings for reporting to the 1SEC cloud dashboard.
 type CloudConfig struct {
-	Enabled             bool   `yaml:"enabled"`
-	APIURL              string `yaml:"api_url"`
-	APIKey              string `yaml:"api_key"`
-	HeartbeatInterval   int    `yaml:"heartbeat_interval"`    // seconds, 0 = disabled
-	CommandPollInterval int    `yaml:"command_poll_interval"` // seconds, 0 = disabled, default 15
+	Enabled               bool   `yaml:"enabled"`
+	APIURL                string `yaml:"api_url"`
+	APIKey                string `yaml:"api_key"`
+	HeartbeatInterval     int    `yaml:"heartbeat_interval"`      // seconds, <= 0 uses 60
+	CommandPollInterval   int    `yaml:"command_poll_interval"`   // seconds, <= 0 uses 15 when explicitly enabled
+	RemoteCommandsEnabled bool   `yaml:"remote_commands_enabled"` // opt-in; telemetry never grants remote control
+	InstanceID            string `yaml:"instance_id"`             // enrolled device identity; unique per engine
 }
 
 // EnforcementConfig holds the automated response / enforcement layer settings.

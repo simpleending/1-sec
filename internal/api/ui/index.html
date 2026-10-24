@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>1SEC · Local dashboard</title><link rel="stylesheet" href="/ui/style.css"><script src="/ui/app.js" defer></script></head>
+<body><header><a href="/ui/" class="brand">1SEC<span>LOCAL</span></a><p>Security operations on your engine</p><span id="scope">Disconnected</span></header>
+<main><section class="connection"><h1>Your engine. Your controls.</h1><p>No cloud account required. Use a local read-only or write API key. The key stays in this page's memory until disconnect or reload.</p>
+<form id="connect"><label>Local API key <input id="key" type="password" autocomplete="off" placeholder="Leave empty for configured open read mode"></label><button>Connect</button><button type="button" id="disconnect">Disconnect</button></form>
+<div class="toolbar"><label>Refresh <select id="refresh"><option value="0">Manual</option><option value="5">5 seconds</option><option value="15" selected>15 seconds</option><option value="60">60 seconds</option></select></label><button id="reload">Refresh now</button></div><p role="status" id="message">Connect to load engine data.</p></section>
+<nav aria-label="Engine sections" id="navigation"></nav>
+<section class="workspace"><div class="heading"><h2 id="title">Overview</h2><label>Filter rows <input id="filter" type="search" placeholder="Module, target, severity…"></label></div><p class="muted">Views show the existing API's current in-memory snapshots. Persistent local archive and full configuration remain available through the CLI.</p>
+<div id="controls"></div><div id="content"></div><details><summary>Response details</summary><pre id="raw"></pre></details></section></main>
+<footer>All operations use this engine's API. Read-only keys cannot change enforcement. Runtime changes require an explicit configuration edit to persist across restarts.</footer></body></html>

@@ -264,7 +264,10 @@ cloud:
   enabled: false
   api_url: "https://1-sec.dev/api/v1"
   # api_key: "1sec_pro_your_key_here"
-  heartbeat_interval: 60    # seconds between heartbeats (0 = disabled)
+  heartbeat_interval: 60    # seconds; <= 0 uses 60
+  # instance_id: "i-enrolled-id-from-dashboard" # unique per machine
+  remote_commands_enabled: false # telemetry does not enable remote control
+  command_poll_interval: 15 # used only when remote commands are explicitly enabled
 
 # ── Auth0 Token Vault — Secure AI Agent Token Delegation ────────────────────
 # Token Vault is a sub-component of AI Containment (Module 11) that enables

@@ -132,6 +132,7 @@ Media screening and ransomware response require the right telemetry. See the [de
 1sec modules --json
 
 1sec dashboard                   Open the real-time TUI dashboard
+1sec dashboard --web             Print the optional local web dashboard URL
 1sec config                      Show resolved config
 1sec config --validate           Validate and exit
 1sec config --json

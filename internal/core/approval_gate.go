@@ -114,6 +114,8 @@ func (ag *ApprovalGate) SetNotifyFunc(fn func(pa *PendingApproval)) {
 // It considers the global require list, per-rule skip_approval flag,
 // and the auto_approve_above severity threshold.
 func (ag *ApprovalGate) RequiresApproval(action ActionType) bool {
+	ag.mu.Lock()
+	defer ag.mu.Unlock()
 	if !ag.cfg.Enabled {
 		return false
 	}
@@ -128,6 +130,8 @@ func (ag *ApprovalGate) RequiresApproval(action ActionType) bool {
 // RequiresApprovalForRule is the full decision: considers the rule's
 // SkipApproval flag and the severity-based auto-approve threshold.
 func (ag *ApprovalGate) RequiresApprovalForRule(action ActionType, severity Severity, skipApproval bool) bool {
+	ag.mu.Lock()
+	defer ag.mu.Unlock()
 	if !ag.cfg.Enabled {
 		return false
 	}

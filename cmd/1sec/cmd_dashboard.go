@@ -26,6 +26,7 @@ func cmdDashboard(args []string) {
 	port := fs.Int("port", 0, "API port override")
 	apiKeyFlag := fs.String("api-key", "", "API key for authentication")
 	refreshStr := fs.String("refresh", "3s", "Refresh interval")
+	web := fs.Bool("web", false, "Print the optional local web dashboard URL")
 	profileFlag := fs.String("profile", "", "Named profile to use")
 	fs.Parse(args)
 
@@ -39,6 +40,14 @@ func cmdDashboard(args []string) {
 	}
 
 	base := apiBase(*configPath, hostVal, portVal)
+	if *web {
+		fmt.Printf("Local dashboard: %s/ui/\nUse a local API key in the page. The engine must be running.\n", base)
+		return
+	}
+	if refresh <= 0 {
+		errorf("refresh interval must be positive")
+		return
+	}
 	apiKey := resolveAPIKey(*apiKeyFlag, *configPath)
 	timeout := 5 * time.Second
 

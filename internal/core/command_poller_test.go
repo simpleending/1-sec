@@ -19,6 +19,8 @@ func testEngineForPoller(t *testing.T, approvalGateEnabled bool) *Engine {
 	cfg := DefaultConfig()
 	cfg.RustEngine.Enabled = false
 	cfg.Cloud.Enabled = true
+	cfg.Cloud.RemoteCommandsEnabled = true
+	cfg.Cloud.InstanceID = "i-test"
 	cfg.Cloud.APIKey = "test-cloud-key"
 	cfg.Cloud.CommandPollInterval = 5
 	cfg.Enforcement = &EnforcementConfig{
@@ -604,6 +606,8 @@ func TestCommandPoller_Poll_ExecutesAndAcks(t *testing.T) {
 				Commands: []CloudCommand{
 					{
 						ID:         "cmd-poll-1",
+						InstanceID: "i-test",
+						ExpiresAt:  time.Now().Add(time.Minute).UTC().Format(time.RFC3339),
 						Type:       "approve",
 						Status:     "pending",
 						ApprovalID: approvalID,
@@ -650,6 +654,8 @@ func TestCommandPoller_Poll_HandlesFailedCommand(t *testing.T) {
 				Commands: []CloudCommand{
 					{
 						ID:         "cmd-fail-1",
+						InstanceID: "i-test",
+						ExpiresAt:  time.Now().Add(time.Minute).UTC().Format(time.RFC3339),
 						Type:       "approve",
 						Status:     "pending",
 						ApprovalID: "nonexistent-approval",

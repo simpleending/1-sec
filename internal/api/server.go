@@ -35,6 +35,8 @@ func NewServer(engine *core.Engine) *Server {
 	}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("/ui/", s.handleDashboard)
+	mux.HandleFunc("/api/v1/ui-access", s.handleDashboardAccess)
 
 	// ── Read-only endpoints (safe for dashboards) ───────────────────
 	mux.HandleFunc("/api/v1/status", s.handleStatus)
@@ -758,7 +760,8 @@ func isMutatingPath(path, method string) bool {
 func authMiddleware(next http.Handler, cfg *core.Config, logger zerolog.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Always allow health checks without auth
-		if r.URL.Path == "/health" {
+		asset, _ := dashboardAsset(r.URL.Path)
+		if r.URL.Path == "/health" || asset != "" {
 			next.ServeHTTP(w, r)
 			return
 		}

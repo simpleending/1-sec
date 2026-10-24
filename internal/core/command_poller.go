@@ -2,9 +2,13 @@ package core
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -28,6 +32,7 @@ import (
 // CloudCommand mirrors the RemoteCommand type from the dashboard API.
 type CloudCommand struct {
 	ID             string `json:"id"`
+	InstanceID     string `json:"instanceId"`
 	Type           string `json:"type"`
 	Status         string `json:"status"`
 	CreatedAt      string `json:"createdAt"`
@@ -49,7 +54,8 @@ type CloudCommand struct {
 
 // CloudCommandsResponse is the shape returned by GET /api/v1/commands?status=pending.
 type CloudCommandsResponse struct {
-	Commands []CloudCommand `json:"commands"`
+	Commands   []CloudCommand `json:"commands"`
+	NextCursor string         `json:"nextCursor"`
 }
 
 // CommandPoller polls the cloud dashboard for pending commands and executes them.
@@ -75,7 +81,7 @@ func NewCommandPoller(engine *Engine) *CommandPoller {
 
 // Start begins the polling loop.
 func (cp *CommandPoller) Start() {
-	if !cp.cfg.Cloud.Enabled || cp.cfg.Cloud.APIKey == "" {
+	if !cp.cfg.Cloud.Enabled || cp.cfg.Cloud.APIKey == "" || !cp.cfg.Cloud.RemoteCommandsEnabled || cp.cfg.Cloud.InstanceID == "" {
 		cp.logger.Info().Msg("command polling disabled (cloud not configured)")
 		return
 	}
@@ -101,7 +107,11 @@ func (cp *CommandPoller) Stop() {
 
 func (cp *CommandPoller) pollLoop(interval time.Duration) {
 	// Initial delay to let the engine fully start
-	time.Sleep(10 * time.Second)
+	select {
+	case <-cp.ctx.Done():
+		return
+	case <-time.After(10 * time.Second):
+	}
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -117,6 +127,9 @@ func (cp *CommandPoller) pollLoop(interval time.Duration) {
 }
 
 func (cp *CommandPoller) poll() {
+	if !cp.cfg.Cloud.RemoteCommandsEnabled || !cp.cfg.Cloud.Enabled || cp.cfg.Cloud.InstanceID == "" {
+		return
+	}
 	commands, err := cp.fetchPendingCommands()
 	if err != nil {
 		cp.logger.Debug().Err(err).Msg("failed to fetch pending commands")
@@ -128,15 +141,29 @@ func (cp *CommandPoller) poll() {
 	}
 
 	cp.logger.Info().Int("count", len(commands)).Msg("received remote commands from dashboard")
+	sort.SliceStable(commands, func(i, j int) bool { return commands[i].CreatedAt < commands[j].CreatedAt })
 
 	for _, cmd := range commands {
+		expires, parseErr := time.Parse(time.RFC3339, cmd.ExpiresAt)
+		if cmd.InstanceID != cp.cfg.Cloud.InstanceID || cmd.Status != "pending" || parseErr != nil || !time.Now().Before(expires) {
+			continue
+		}
+		var random [32]byte
+		if _, err := rand.Read(random[:]); err != nil {
+			continue
+		}
+		token := base64.RawURLEncoding.EncodeToString(random[:])
 		// ACK immediately so the dashboard knows we picked it up
-		if err := cp.ackCommand(cmd.ID, "acknowledged", "", ""); err != nil {
+		if err := cp.ackCommand(cmd.ID, "acknowledged", "", "", token); err != nil {
 			cp.logger.Warn().Err(err).Str("cmd_id", cmd.ID).Msg("failed to ACK command")
 			continue
 		}
 
-		// Execute the command
+		// Do not execute a command that expired or was disabled while claiming it.
+		if !cp.cfg.Cloud.RemoteCommandsEnabled || !time.Now().Before(expires) {
+			_ = cp.ackCommand(cmd.ID, "failed", "", "Remote control disabled or command expired before execution", token)
+			continue
+		}
 		result, execErr := cp.executeCommand(cmd)
 		if execErr != nil {
 			cp.logger.Warn().
@@ -144,7 +171,7 @@ func (cp *CommandPoller) poll() {
 				Str("cmd_id", cmd.ID).
 				Str("type", cmd.Type).
 				Msg("remote command failed")
-			_ = cp.ackCommand(cmd.ID, "failed", "", execErr.Error())
+			_ = cp.ackCommand(cmd.ID, "failed", "", execErr.Error(), token)
 		} else {
 			cp.logger.Info().
 				Str("cmd_id", cmd.ID).
@@ -152,41 +179,58 @@ func (cp *CommandPoller) poll() {
 				Str("result", result).
 				Str("issued_by", cmd.IssuedBy).
 				Msg("remote command executed")
-			_ = cp.ackCommand(cmd.ID, "executed", result, "")
+			_ = cp.ackCommand(cmd.ID, "executed", result, "", token)
 		}
 	}
 }
 
 func (cp *CommandPoller) fetchPendingCommands() ([]CloudCommand, error) {
-	url := strings.TrimRight(cp.cfg.Cloud.APIURL, "/") + "/commands?status=pending"
-	req, err := newAuthRequest("GET", url, nil, cp.cfg.Cloud.APIKey)
-	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
+	ctx, cancel := context.WithTimeout(cp.ctx, 30*time.Second)
+	defer cancel()
+	query := url.Values{"status": {"pending"}, "instanceId": {cp.cfg.Cloud.InstanceID}, "limit": {"200"}}
+	var commands []CloudCommand
+	seen := make(map[string]bool)
+	for {
+		endpoint := strings.TrimRight(cp.cfg.Cloud.APIURL, "/") + "/commands?" + query.Encode()
+		req, err := newAuthRequest("GET", endpoint, nil, cp.cfg.Cloud.APIKey)
+		if err != nil {
+			return nil, fmt.Errorf("creating request: %w", err)
+		}
+		resp, err := httpClient.Do(req.WithContext(ctx))
+		if err != nil {
+			return nil, fmt.Errorf("fetching commands: %w", err)
+		}
+		var page CloudCommandsResponse
+		if resp.StatusCode != 200 {
+			resp.Body.Close()
+			return nil, fmt.Errorf("cloud API returned %d", resp.StatusCode)
+		}
+		err = json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&page)
+		resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("decoding response: %w", err)
+		}
+		commands = append(commands, page.Commands...)
+		if page.NextCursor == "" {
+			break
+		}
+		if seen[page.NextCursor] {
+			return nil, fmt.Errorf("repeated command pagination cursor")
+		}
+		seen[page.NextCursor] = true
+		query.Set("cursor", page.NextCursor)
 	}
-
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("fetching commands: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return nil, fmt.Errorf("cloud API returned %d: %s", resp.StatusCode, string(body))
-	}
-
-	var result CloudCommandsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decoding response: %w", err)
-	}
-
-	return result.Commands, nil
+	return commands, nil
 }
 
-func (cp *CommandPoller) ackCommand(cmdID, status, result, errMsg string) error {
+func (cp *CommandPoller) ackCommand(cmdID, status, result, errMsg string, claimToken ...string) error {
 	payload := map[string]string{
-		"id":     cmdID,
-		"status": status,
+		"id":         cmdID,
+		"status":     status,
+		"instanceId": cp.cfg.Cloud.InstanceID,
+	}
+	if len(claimToken) == 1 {
+		payload["claimToken"] = claimToken[0]
 	}
 	if result != "" {
 		payload["result"] = result
@@ -371,50 +415,19 @@ func (cp *CommandPoller) executeSetApprovalConfig(cmd CloudCommand) (string, err
 	if cfg == nil {
 		return "", fmt.Errorf("enforcement not configured")
 	}
-
-	if !cfg.ApprovalGate.Enabled {
+	if !cfg.GetApprovalGate().Enabled {
 		return "", fmt.Errorf("approval gate not enabled")
 	}
-
-	changes := make([]string, 0, 2)
-
-	if cmd.AutoApproveAbove != nil {
-		validSeverities := map[string]bool{"": true, "LOW": true, "MEDIUM": true, "HIGH": true, "CRITICAL": true}
-		val := strings.ToUpper(*cmd.AutoApproveAbove)
-		if !validSeverities[val] {
-			return "", fmt.Errorf("invalid auto_approve_above value: %s", *cmd.AutoApproveAbove)
-		}
-		cfg.ApprovalGate.AutoApproveAbove = val
-		if val == "" {
-			changes = append(changes, "auto_approve_above disabled")
-		} else {
-			changes = append(changes, "auto_approve_above set to "+val)
-		}
+	if cmd.AutoApproveAbove == nil && cmd.RequireApproval == nil {
+		return "", fmt.Errorf("no approval settings supplied")
 	}
-
-	if cmd.RequireApproval != nil {
-		validActions := map[string]bool{
-			"block_ip": true, "kill_process": true, "quarantine_file": true,
-			"drop_connection": true, "disable_user": true, "webhook": true,
-			"command": true, "log_only": true,
-		}
-		for _, a := range cmd.RequireApproval {
-			if !validActions[a] {
-				return "", fmt.Errorf("unknown action in require_approval: %s", a)
-			}
-		}
-		cfg.ApprovalGate.RequireApproval = cmd.RequireApproval
-		changes = append(changes, fmt.Sprintf("require_approval updated (%d actions)", len(cmd.RequireApproval)))
+	var gate *ApprovalGate
+	if cp.engine.ResponseEngine != nil {
+		gate = cp.engine.ResponseEngine.ApprovalGate
 	}
-
-	if len(changes) == 0 {
-		return "", fmt.Errorf("no changes specified (provide autoApproveAbove or requireApproval)")
+	if err := UpdateApprovalSettings(cfg, gate, cmd.AutoApproveAbove, cmd.RequireApproval); err != nil {
+		return "", err
 	}
-
-	cp.logger.Warn().
-		Strs("changes", changes).
-		Str("issued_by", cmd.IssuedBy).
-		Msg("approval gate config updated via dashboard command")
-
-	return fmt.Sprintf("approval config updated: %s", strings.Join(changes, ", ")), nil
+	cp.logger.Warn().Str("issued_by", cmd.IssuedBy).Msg("approval gate configuration updated")
+	return "approval configuration updated on the live gate; edit config to persist across restart", nil
 }

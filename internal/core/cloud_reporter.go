@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"runtime"
 	"strings"
 	"time"
 
@@ -50,6 +49,7 @@ type CloudEnforcementRecord struct {
 
 // CloudCorrelationRecord is the shape expected by the cloud dashboard's ingest API.
 type CloudCorrelationRecord struct {
+	InstanceID      string   `json:"instanceId"`
 	ID              string   `json:"id"`
 	Timestamp       string   `json:"timestamp"`
 	ChainName       string   `json:"chainName"`
@@ -66,22 +66,25 @@ type CloudCorrelationRecord struct {
 
 // CloudHeartbeat is the shape expected by the cloud dashboard's ingest API.
 type CloudHeartbeat struct {
-	InstanceID        string   `json:"instanceId"`
-	Hostname          string   `json:"hostname"`
-	Version           string   `json:"version"`
-	Uptime            int64    `json:"uptime"`
-	Timestamp         string   `json:"timestamp"`
-	ModulesActive     int      `json:"modulesActive"`
-	ModulesTotal      int      `json:"modulesTotal"`
-	BusConnected      bool     `json:"busConnected"`
-	RustEngine        bool     `json:"rustEngine"`
-	ArchiveEnabled    bool     `json:"archiveEnabled"`
-	CollectorsRunning []string `json:"collectorsRunning"`
-	AlertCount        int      `json:"alertCount"`
-	EventsProcessed   int64    `json:"eventsProcessed"`
-	EnforcementMode   string   `json:"enforcementMode"`
-	Preset            string   `json:"preset,omitempty"`
-	DisabledModules   []string `json:"disabledModules,omitempty"`
+	EnforcementPolicies   map[string]bool     `json:"enforcementPolicies"`
+	ApprovalConfig        *ApprovalGateConfig `json:"approvalConfig,omitempty"`
+	InstanceID            string              `json:"instanceId"`
+	RemoteCommandsEnabled bool                `json:"remoteCommandsEnabled"`
+	Hostname              string              `json:"hostname"`
+	Version               string              `json:"version"`
+	Uptime                int64               `json:"uptime"`
+	Timestamp             string              `json:"timestamp"`
+	ModulesActive         int                 `json:"modulesActive"`
+	ModulesTotal          int                 `json:"modulesTotal"`
+	BusConnected          bool                `json:"busConnected"`
+	RustEngine            bool                `json:"rustEngine"`
+	ArchiveEnabled        bool                `json:"archiveEnabled"`
+	CollectorsRunning     []string            `json:"collectorsRunning"`
+	AlertCount            int                 `json:"alertCount"`
+	EventsProcessed       int64               `json:"eventsProcessed"`
+	EnforcementMode       string              `json:"enforcementMode"`
+	Preset                string              `json:"preset,omitempty"`
+	DisabledModules       []string            `json:"disabledModules,omitempty"`
 }
 
 // NewCloudReporter creates a new cloud reporter.
@@ -180,23 +183,35 @@ func (cr *CloudReporter) sendHeartbeat() {
 
 	rustEngine := cr.cfg.RustEngine.Enabled && cr.engine.RustSidecar != nil && cr.engine.RustSidecar.Running()
 
+	policies := map[string]bool{}
+	var approval *ApprovalGateConfig
+	if cr.engine.ResponseEngine != nil {
+		policies = cr.engine.ResponseEngine.PolicyStates()
+	}
+	if cr.cfg.Enforcement != nil {
+		snapshot := cr.cfg.Enforcement.GetApprovalGate()
+		approval = &snapshot
+	}
 	hb := CloudHeartbeat{
-		InstanceID:        fmt.Sprintf("i-%s-%s", hostname, runtime.GOARCH),
-		Hostname:          hostname,
-		Version:           Version,
-		Uptime:            int64(time.Since(cr.engine.startTime).Seconds()),
-		Timestamp:         time.Now().UTC().Format(time.RFC3339),
-		ModulesActive:     modulesActive,
-		ModulesTotal:      modulesTotal,
-		BusConnected:      cr.engine.Bus != nil && cr.engine.Bus.IsConnected(),
-		RustEngine:        rustEngine,
-		ArchiveEnabled:    cr.cfg.Archive.Enabled,
-		CollectorsRunning: []string{},
-		AlertCount:        cr.engine.Pipeline.Count(),
-		EventsProcessed:   cr.engine.Bus.GetMetrics()["events_published"],
-		EnforcementMode:   enforcementMode,
-		Preset:            preset,
-		DisabledModules:   disabledModules,
+		EnforcementPolicies:   policies,
+		ApprovalConfig:        approval,
+		InstanceID:            cloudInstanceID(cr.cfg.Cloud),
+		RemoteCommandsEnabled: cr.cfg.Cloud.RemoteCommandsEnabled && cr.cfg.Cloud.InstanceID != "",
+		Hostname:              hostname,
+		Version:               Version,
+		Uptime:                int64(time.Since(cr.engine.startTime).Seconds()),
+		Timestamp:             time.Now().UTC().Format(time.RFC3339),
+		ModulesActive:         modulesActive,
+		ModulesTotal:          modulesTotal,
+		BusConnected:          cr.engine.Bus != nil && cr.engine.Bus.IsConnected(),
+		RustEngine:            rustEngine,
+		ArchiveEnabled:        cr.cfg.Archive.Enabled,
+		CollectorsRunning:     []string{},
+		AlertCount:            cr.engine.Pipeline.Count(),
+		EventsProcessed:       cr.engine.Bus.GetMetrics()["events_published"],
+		EnforcementMode:       enforcementMode,
+		Preset:                preset,
+		DisabledModules:       disabledModules,
 	}
 
 	payload := map[string]interface{}{
@@ -238,7 +253,7 @@ func (cr *CloudReporter) enforcementReporter() {
 			}
 
 			hostname, _ := os.Hostname()
-			instanceID := fmt.Sprintf("i-%s-%s", hostname, runtime.GOARCH)
+			instanceID := cloudInstanceID(cr.cfg.Cloud)
 
 			cloudRecords := make([]CloudEnforcementRecord, 0, len(newRecords))
 			for _, r := range newRecords {
@@ -301,6 +316,7 @@ func (cr *CloudReporter) reportCorrelation(alert *Alert, chainName string) {
 	sourceIP, _ := alert.Metadata["source_ip"].(string)
 
 	rec := CloudCorrelationRecord{
+		InstanceID:     cloudInstanceID(cr.cfg.Cloud),
 		ID:             alert.ID,
 		Timestamp:      time.Now().UTC().Format(time.RFC3339),
 		ChainName:      chainName,

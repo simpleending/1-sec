@@ -1,6 +1,6 @@
 [package]
 name = "onesec-engine"
-version = "0.4.25"
+version = "0.4.26"
 edition = "2021"
 description = "1SEC high-performance security engine — regex matching, packet inspection, crypto operations"
 license = "AGPL-3.0"
@@ -11,7 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 # Async runtime
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "~1.51.6", features = ["full"] }
 
 # NATS client
 async-nats = "0.48"

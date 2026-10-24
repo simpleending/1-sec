@@ -620,18 +620,19 @@ func (s *Server) handleEnforceConfigGet(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	gateConfig := cfg.GetApprovalGate()
 	// Approval gate config
 	approvalGate := map[string]interface{}{
 		"enabled":            false,
 		"require_approval":   []string{},
 		"auto_approve_above": "",
 	}
-	if cfg.ApprovalGate.Enabled {
+	if gateConfig.Enabled {
 		approvalGate["enabled"] = true
-		approvalGate["require_approval"] = cfg.ApprovalGate.RequireApproval
-		approvalGate["auto_approve_above"] = cfg.ApprovalGate.AutoApproveAbove
-		approvalGate["ttl_seconds"] = int(cfg.ApprovalGate.TTL.Seconds())
-		approvalGate["max_pending"] = cfg.ApprovalGate.MaxPending
+		approvalGate["require_approval"] = gateConfig.RequireApproval
+		approvalGate["auto_approve_above"] = gateConfig.AutoApproveAbove
+		approvalGate["ttl_seconds"] = int(gateConfig.TTL.Seconds())
+		approvalGate["max_pending"] = gateConfig.MaxPending
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -663,49 +664,23 @@ func (s *Server) handleEnforceConfigPost(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	var gate *core.ApprovalGate
+	if s.engine.ResponseEngine != nil {
+		gate = s.engine.ResponseEngine.ApprovalGate
+	}
+	if err := core.UpdateApprovalSettings(cfg, gate, body.AutoApproveAbove, body.RequireApproval); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": err.Error()})
+		return
+	}
 	changes := make([]string, 0)
-
 	if body.DryRun != nil {
 		cfg.SetDryRun(*body.DryRun)
-		if *body.DryRun {
-			changes = append(changes, "dry_run enabled")
-		} else {
-			changes = append(changes, "dry_run disabled")
-		}
+		changes = append(changes, "dry_run updated")
 	}
-
 	if body.AutoApproveAbove != nil {
-		validSeverities := map[string]bool{"": true, "LOW": true, "MEDIUM": true, "HIGH": true, "CRITICAL": true}
-		val := strings.ToUpper(*body.AutoApproveAbove)
-		if !validSeverities[val] {
-			writeJSON(w, http.StatusBadRequest, map[string]interface{}{
-				"error": "invalid auto_approve_above — use LOW, MEDIUM, HIGH, CRITICAL, or empty to disable",
-			})
-			return
-		}
-		cfg.ApprovalGate.AutoApproveAbove = val
-		if val == "" {
-			changes = append(changes, "auto_approve_above disabled")
-		} else {
-			changes = append(changes, "auto_approve_above set to "+val)
-		}
+		changes = append(changes, "auto_approve_above updated")
 	}
-
 	if body.RequireApproval != nil {
-		validActions := map[string]bool{
-			"block_ip": true, "kill_process": true, "quarantine_file": true,
-			"drop_connection": true, "disable_user": true, "webhook": true,
-			"command": true, "log_only": true,
-		}
-		for _, a := range body.RequireApproval {
-			if !validActions[a] {
-				writeJSON(w, http.StatusBadRequest, map[string]interface{}{
-					"error": "unknown action in require_approval: " + a,
-				})
-				return
-			}
-		}
-		cfg.ApprovalGate.RequireApproval = body.RequireApproval
 		changes = append(changes, "require_approval updated")
 	}
 
