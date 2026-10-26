@@ -31,6 +31,10 @@ const SSH_TRACKER_WINDOW_SECS: u64 = 1;
 const WEBSOCKET_MAX_FRAME_PAYLOAD: u64 = 16 * 1024 * 1024;
 const WEBSOCKET_FLOW_TTL_SECS: u64 = 3600;
 const MAX_WEBSOCKET_FLOWS: usize = 4096;
+// shortcut: FIFO eviction loses older evidence under churn; capacity anomalies
+// expose reduced coverage until deployment-specific load tuning is available.
+const MAX_TRACKED_PACKET_SOURCES: usize = 4096;
+const MAX_TRACKED_SSH_FLOWS: usize = 4096;
 
 /// Per-source tracking for anomaly detection.
 struct SourceTracker {
@@ -38,6 +42,7 @@ struct SourceTracker {
     port_scans: std::collections::HashMap<String, std::collections::HashSet<u16>>,
     /// Packet counts per source IP.
     packet_counts: std::collections::HashMap<String, u64>,
+    admission_order: std::collections::VecDeque<String>,
     /// Last stats reset time.
     last_reset: std::time::Instant,
 }
@@ -47,6 +52,7 @@ impl SourceTracker {
         Self {
             port_scans: std::collections::HashMap::new(),
             packet_counts: std::collections::HashMap::new(),
+            admission_order: std::collections::VecDeque::new(),
             last_reset: std::time::Instant::now(),
         }
     }
@@ -58,15 +64,31 @@ impl SourceTracker {
         if self.last_reset.elapsed().as_secs() > STATS_INTERVAL_SECS {
             self.port_scans.clear();
             self.packet_counts.clear();
+            self.admission_order.clear();
             self.last_reset = std::time::Instant::now();
         }
 
         // Track port scan behavior
+        if !self.port_scans.contains_key(src_ip) {
+            if self.port_scans.len() >= MAX_TRACKED_PACKET_SOURCES {
+                if let Some(oldest) = self.admission_order.pop_front() {
+                    self.port_scans.remove(&oldest);
+                    self.packet_counts.remove(&oldest);
+                }
+                anomalies.push(
+                    "tracking_capacity: packet source history evicted; port-scan coverage reduced"
+                        .to_string(),
+                );
+            }
+            self.admission_order.push_back(src_ip.to_string());
+        }
         let ports = self.port_scans.entry(src_ip.to_string()).or_default();
-        ports.insert(dst_port);
+        if ports.len() < SUSPICIOUS_PORT_SCAN_THRESHOLD {
+            ports.insert(dst_port);
+        }
         if ports.len() >= SUSPICIOUS_PORT_SCAN_THRESHOLD {
             anomalies.push(format!(
-                "port_scan: {} unique ports contacted from {}",
+                "port_scan: at least {} unique ports contacted from {}",
                 ports.len(),
                 src_ip
             ));
@@ -74,7 +96,7 @@ impl SourceTracker {
 
         // Track packet volume
         let count = self.packet_counts.entry(src_ip.to_string()).or_insert(0);
-        *count += 1;
+        *count = count.saturating_add(1);
 
         anomalies
     }
@@ -84,6 +106,7 @@ impl SourceTracker {
 struct SSHTracker {
     /// Per-flow: visible channel-open timestamps for rate tracking
     flow_channel_opens: std::collections::HashMap<String, Vec<std::time::Instant>>,
+    admission_order: std::collections::VecDeque<String>,
     last_reset: std::time::Instant,
 }
 
@@ -91,6 +114,7 @@ impl SSHTracker {
     fn new() -> Self {
         Self {
             flow_channel_opens: std::collections::HashMap::new(),
+            admission_order: std::collections::VecDeque::new(),
             last_reset: std::time::Instant::now(),
         }
     }
@@ -105,6 +129,7 @@ impl SSHTracker {
         // Reset periodically
         if self.last_reset.elapsed().as_secs() > STATS_INTERVAL_SECS {
             self.flow_channel_opens.clear();
+            self.admission_order.clear();
             self.last_reset = std::time::Instant::now();
         }
 
@@ -128,6 +153,18 @@ impl SSHTracker {
         }
 
         let now = std::time::Instant::now();
+        if !self.flow_channel_opens.contains_key(&key) {
+            if self.flow_channel_opens.len() >= MAX_TRACKED_SSH_FLOWS {
+                if let Some(oldest) = self.admission_order.pop_front() {
+                    self.flow_channel_opens.remove(&oldest);
+                }
+                anomalies.push(
+                    "tracking_capacity: SSH flow history evicted; rate-detection coverage reduced"
+                        .to_string(),
+                );
+            }
+            self.admission_order.push_back(key.clone());
+        }
         let timestamps = self.flow_channel_opens.entry(key.clone()).or_default();
         timestamps.push(now);
         let window_start = now - std::time::Duration::from_secs(SSH_TRACKER_WINDOW_SECS);
@@ -168,6 +205,7 @@ fn is_ssh_channel_open_payload(payload: &[u8]) -> bool {
 /// interpreted as RFC 6455 frames on confirmed client-to-server flows.
 struct WebSocketTracker {
     flows: std::collections::HashMap<String, std::time::Instant>,
+    admission_order: std::collections::VecDeque<String>,
     last_prune: std::time::Instant,
 }
 
@@ -175,6 +213,7 @@ impl WebSocketTracker {
     fn new() -> Self {
         Self {
             flows: std::collections::HashMap::new(),
+            admission_order: std::collections::VecDeque::new(),
             last_prune: std::time::Instant::now(),
         }
     }
@@ -195,23 +234,25 @@ impl WebSocketTracker {
         if self.last_prune.elapsed().as_secs() >= STATS_INTERVAL_SECS {
             let cutoff = now - std::time::Duration::from_secs(WEBSOCKET_FLOW_TTL_SECS);
             self.flows.retain(|_, last_seen| *last_seen >= cutoff);
+            self.admission_order
+                .retain(|key| self.flows.contains_key(key));
             self.last_prune = now;
         }
 
         let key = Self::flow_key(src_ip, src_port, dst_ip, dst_port);
         if is_websocket_upgrade_request(payload) {
-            if !self.flows.contains_key(&key) && self.flows.len() >= MAX_WEBSOCKET_FLOWS {
-                if let Some(oldest) = self
-                    .flows
-                    .iter()
-                    .min_by_key(|(_, at)| **at)
-                    .map(|(key, _)| key.clone())
-                {
-                    self.flows.remove(&oldest);
+            let mut anomalies = Vec::new();
+            if !self.flows.contains_key(&key) {
+                if self.flows.len() >= MAX_WEBSOCKET_FLOWS {
+                    if let Some(oldest) = self.admission_order.pop_front() {
+                        self.flows.remove(&oldest);
+                    }
+                    anomalies.push("tracking_capacity: WebSocket flow history evicted; prior flow coverage reduced".to_string());
                 }
+                self.admission_order.push_back(key.clone());
             }
             self.flows.insert(key, now);
-            return Vec::new();
+            return anomalies;
         }
         let Some(last_seen) = self.flows.get_mut(&key) else {
             return Vec::new();
@@ -735,6 +776,109 @@ mod source_tracker_tests {
 #[cfg(test)]
 mod packet_util_tests {
     use super::*;
+
+    #[test]
+    fn source_tracker_bounds_state_and_admits_new_sources_with_capacity_warning() {
+        let mut tracker = SourceTracker::new();
+        for index in 0..(MAX_TRACKED_PACKET_SOURCES + 100) {
+            tracker.track(&format!("source-{index}"), 80);
+        }
+        assert_eq!(tracker.port_scans.len(), MAX_TRACKED_PACKET_SOURCES);
+        assert_eq!(tracker.packet_counts.len(), MAX_TRACKED_PACKET_SOURCES);
+        let mut detected = false;
+        for port in 1..1000 {
+            detected |= tracker
+                .track("source-4195", port)
+                .iter()
+                .any(|message| message.contains("port_scan"));
+        }
+        assert!(detected);
+        assert_eq!(
+            tracker.port_scans["source-4195"].len(),
+            SUSPICIOUS_PORT_SCAN_THRESHOLD
+        );
+        assert!(tracker
+            .track("new-source", 80)
+            .iter()
+            .any(|a| a.contains("tracking_capacity")));
+        assert!(tracker.port_scans.contains_key("new-source"));
+        tracker.last_reset =
+            std::time::Instant::now() - std::time::Duration::from_secs(STATS_INTERVAL_SECS + 2);
+        tracker.track("new-source", 80);
+        assert_eq!(tracker.port_scans.len(), 1);
+        assert!(tracker.port_scans.contains_key("new-source"));
+    }
+
+    #[test]
+    fn ssh_tracker_bounds_state_and_admits_new_flows_with_capacity_warning() {
+        let mut tracker = SSHTracker::new();
+        let channel_open = [90];
+        for index in 0..(MAX_TRACKED_SSH_FLOWS + 100) {
+            tracker.track(&format!("source-{index}"), "destination", 22, &channel_open);
+        }
+        assert_eq!(tracker.flow_channel_opens.len(), MAX_TRACKED_SSH_FLOWS);
+        let mut detected = false;
+        for _ in 0..=SSH_MAX_CHANNEL_OPENS_PER_SEC {
+            detected |= tracker
+                .track("source-4195", "destination", 22, &channel_open)
+                .iter()
+                .any(|message| message.contains("ssh_channel_exhaustion"));
+        }
+        assert!(detected);
+        assert!(tracker
+            .track("new-source", "destination", 22, &channel_open)
+            .iter()
+            .any(|a| a.contains("tracking_capacity")));
+        assert!(tracker
+            .flow_channel_opens
+            .contains_key(&SSHTracker::flow_key("new-source", "destination", 22)));
+        let oversized = vec![0; SSH_MAX_PAYLOAD_SIZE + 1];
+        assert!(tracker
+            .track("untracked", "destination", 22, &oversized)
+            .iter()
+            .any(|message| message.contains("ssh_oversized_frame")));
+        assert_eq!(tracker.flow_channel_opens.len(), MAX_TRACKED_SSH_FLOWS);
+        tracker.last_reset =
+            std::time::Instant::now() - std::time::Duration::from_secs(STATS_INTERVAL_SECS + 2);
+        tracker.track("new-source", "destination", 22, &channel_open);
+        assert_eq!(tracker.flow_channel_opens.len(), 1);
+    }
+
+    #[test]
+    fn websocket_saturation_admits_new_flows_and_reports_evicted_coverage() {
+        let mut tracker = WebSocketTracker::new();
+        let upgrade = b"GET / HTTP/1.1\r\nUpgrade: websocket\r\nConnection: upgrade\r\n\r\n";
+        for port in 0..MAX_WEBSOCKET_FLOWS {
+            tracker.track("192.0.2.1", port as u16, "198.51.100.1", 80, upgrade);
+        }
+        let warnings = tracker.track("new-source", 65000, "198.51.100.1", 80, upgrade);
+        assert!(warnings.iter().any(|a| a.contains("tracking_capacity")));
+        assert_eq!(tracker.flows.len(), MAX_WEBSOCKET_FLOWS);
+        assert!(!tracker.flows.contains_key(&WebSocketTracker::flow_key(
+            "192.0.2.1",
+            0,
+            "198.51.100.1",
+            80
+        )));
+        assert!(tracker.flows.contains_key(&WebSocketTracker::flow_key(
+            "new-source",
+            65000,
+            "198.51.100.1",
+            80
+        )));
+        assert!(!tracker
+            .track("new-source", 65000, "198.51.100.1", 80, &[0x82, 0])
+            .is_empty());
+        let expired =
+            std::time::Instant::now() - std::time::Duration::from_secs(WEBSOCKET_FLOW_TTL_SECS + 2);
+        for seen in tracker.flows.values_mut() {
+            *seen = expired;
+        }
+        tracker.last_prune =
+            std::time::Instant::now() - std::time::Duration::from_secs(STATS_INTERVAL_SECS + 2);
+        tracker.track("new-source", 65000, "198.51.100.1", 80, upgrade);
+        assert_eq!(tracker.flows.len(), 1);
+    }
 
     #[test]
     fn websocket_flow_table_is_bounded_under_tuple_churn() {

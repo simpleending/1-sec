@@ -3,7 +3,6 @@
 //! This binary connects to the same NATS JetStream bus as the Go engine and provides:
 //! - Hot-path regex pattern matching (5-10x faster than Go's RE2)
 //! - Optional raw packet capture and protocol parsing
-//! - Post-quantum cryptographic operations (when `pqc` feature is enabled)
 
 #[allow(dead_code)]
 mod analytics;

@@ -3,14 +3,14 @@ package core
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"sync"
 	"time"
 )
 
 // EventDedup is a short-lived deduplication cache that prevents the same event
-// from being processed twice (e.g., when syslog listener and a collector both
-// ingest the same log line). Uses a hash of (type + source_ip + summary +
-// raw_data prefix) with a configurable TTL.
+// from being processed twice. Fingerprints preserve observation identity and
+// all detector input so independent repeated activity still reaches rate detectors.
 type EventDedup struct {
 	mu      sync.Mutex
 	seen    map[string]time.Time
@@ -38,7 +38,14 @@ func NewEventDedup(ttl time.Duration, maxSize int) *EventDedup {
 // IsDuplicate returns true if this event was seen within the TTL window.
 // If not a duplicate, it records the event hash.
 func (d *EventDedup) IsDuplicate(event *SecurityEvent) bool {
-	hash := d.hash(event)
+	// Without observation identity, equal content cannot establish a replay.
+	if event.ID == "" && event.Timestamp.IsZero() {
+		return false
+	}
+	hash, err := d.hash(event)
+	if err != nil {
+		return false
+	}
 
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -61,32 +68,13 @@ func (d *EventDedup) IsDuplicate(event *SecurityEvent) bool {
 	return false
 }
 
-// hash produces a compact fingerprint of the event. We use type + source_ip +
-// first 128 bytes of summary + first 256 bytes of raw data. This catches
-// duplicate syslog lines without being too expensive.
-func (d *EventDedup) hash(event *SecurityEvent) string {
+// hash keeps structured values and full content, with canonical JSON map ordering.
+func (d *EventDedup) hash(event *SecurityEvent) (string, error) {
 	h := sha256.New()
-	h.Write([]byte(event.Type))
-	h.Write([]byte{0})
-	h.Write([]byte(event.SourceIP))
-	h.Write([]byte{0})
-
-	summary := event.Summary
-	if len(summary) > 128 {
-		summary = summary[:128]
+	if err := json.NewEncoder(h).Encode(event); err != nil {
+		return "", err
 	}
-	h.Write([]byte(summary))
-	h.Write([]byte{0})
-
-	if len(event.RawData) > 0 {
-		raw := event.RawData
-		if len(raw) > 256 {
-			raw = raw[:256]
-		}
-		h.Write(raw)
-	}
-
-	return hex.EncodeToString(h.Sum(nil)[:16]) // 128-bit hash is plenty
+	return hex.EncodeToString(h.Sum(nil)[:16]), nil
 }
 
 // evictLocked removes entries older than TTL. Called when cache exceeds maxSize.

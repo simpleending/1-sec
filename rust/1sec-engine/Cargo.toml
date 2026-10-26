@@ -1,8 +1,8 @@
 [package]
 name = "onesec-engine"
-version = "0.4.27"
+version = "0.4.28"
 edition = "2021"
-description = "1SEC high-performance security engine — regex matching, packet inspection, crypto operations"
+description = "1SEC high-performance security engine — regex matching, packet inspection, input normalization"
 license = "AGPL-3.0"
 
 [[bin]]
@@ -29,11 +29,6 @@ serde_yaml = { package = "yaml_serde", version = "0.10.7" }
 pcap = { version = "2", optional = true }
 etherparse = "0.16"
 
-# Post-quantum crypto
-pqcrypto-mlkem = { version = "0.1", optional = true }
-pqcrypto-mldsa = { version = "0.1", optional = true }
-pqcrypto-traits = { version = "0.3", optional = true }
-
 # Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
@@ -56,7 +51,8 @@ blake3 = "1"
 [features]
 default = ["pcap-capture"]
 pcap-capture = ["pcap"]
-pqc = ["pqcrypto-mlkem", "pqcrypto-mldsa", "pqcrypto-traits"]
+# Compatibility flag: no sidecar code used the former optional crypto dependencies.
+pqc = []
 
 [profile.release]
 opt-level = 3

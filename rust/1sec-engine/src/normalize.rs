@@ -112,7 +112,10 @@ fn decode_html_entities(s: &str) -> String {
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'&' && i + 2 < bytes.len() && bytes[i + 1] == b'#' {
-            if let Some(end) = bytes[i..].iter().position(|&b| b == b';') {
+            if let Some(end) = bytes[i..(i + 10).min(bytes.len())]
+                .iter()
+                .position(|&b| b == b';')
+            {
                 if end > 0 && end < 10 {
                     let num_slice = &bytes[i + 2..i + end];
                     let val = if !num_slice.is_empty()
@@ -247,6 +250,8 @@ fn strip_inline_comments(s: &str) -> String {
                 i += pos + 4;
                 continue;
             }
+            out.extend_from_slice(&bytes[i..]);
+            break;
         }
         out.push(bytes[i]);
         i += 1;
@@ -393,6 +398,32 @@ fn collapse_spaces(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn malformed_normalization_preserves_boundaries_and_large_tails() {
+        for (input, expected) in [
+            ("&#0000060;", "<"),
+            ("&#00000060;", "&#00000060;"),
+            ("&#x00003C;", "<"),
+            ("&#bad &#60;", "&#bad <"),
+            ("&#👁👁👁&#60;", "&#👁👁👁<"),
+            ("&#;", "\0"),
+        ] {
+            assert_eq!(decode_html_entities(input), expected, "{input}");
+        }
+        for (input, expected) in [
+            ("SEL/**/ECT", "SELECT"),
+            ("a/*done*/b/*unterminated", "ab/*unterminated"),
+            ("/*a/*b", "/*a/*b"),
+            ("正常/*x*/尾部", "正常尾部"),
+        ] {
+            assert_eq!(strip_inline_comments(input), expected, "{input}");
+        }
+        let entities = "&#".repeat(32768);
+        assert_eq!(decode_html_entities(&entities), entities);
+        let comments = "/*a".repeat(21845);
+        assert_eq!(strip_inline_comments(&comments), comments);
+    }
 
     #[test]
     fn test_url_percent_decode() {

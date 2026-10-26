@@ -275,7 +275,7 @@ func decodeHTMLEntities(s string) string {
 	i := 0
 	for i < len(result) {
 		if result[i] == '&' && i+2 < len(result) && result[i+1] == '#' {
-			end := strings.IndexByte(result[i:], ';')
+			end := strings.IndexByte(result[i:min(i+10, len(result))], ';')
 			if end > 0 && end < 10 {
 				numStr := result[i+2 : i+end]
 				var val int
@@ -406,6 +406,8 @@ func stripInlineComments(s string) string {
 				i += end + 4 // skip past */
 				continue
 			}
+			b.WriteString(s[i:])
+			break
 		}
 		b.WriteByte(s[i])
 		i++

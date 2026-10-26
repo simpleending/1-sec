@@ -3,7 +3,7 @@
 # Usage:
 #   ./build.sh              # Build with default features (includes pcap)
 #   ./build.sh --no-pcap    # Build without pcap (no libpcap dependency)
-#   ./build.sh --all        # Build with all features including PQC
+#   ./build.sh --all        # Build with all active features (includes pcap)
 
 set -euo pipefail
 
@@ -22,7 +22,7 @@ for arg in "$@"; do
         --help|-h)
             echo "Usage: $0 [--no-pcap|--all]"
             echo "  --no-pcap  Build without libpcap dependency"
-            echo "  --all      Build with all features (pcap + PQC crypto)"
+            echo "  --all      Build with all active features (pcap)"
             exit 0
             ;;
     esac
