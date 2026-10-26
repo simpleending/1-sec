@@ -1102,6 +1102,10 @@ func detectSuspiciousModelPayload(event *core.SecurityEvent) string {
 		{pattern: "csubprocess\npopen\n", label: "pickle subprocess gadget"},
 		{pattern: "__reduce__", label: "pickle __reduce__ gadget"},
 		{pattern: "builtins\neval\n", label: "pickle eval gadget"},
+		{pattern: "builtin__\nsystem\n", label: "pickle builtin system reference"},
+		{pattern: "builtin__\neval\n", label: "pickle builtin eval reference"},
+		{pattern: "builtins\nexec\n", label: "pickle exec reference"},
+		{pattern: "builtin__\nexec\n", label: "pickle builtin exec reference"},
 		{pattern: "yaml.unsafe_load", label: "unsafe loader reference in model payload"},
 	}
 	for _, indicator := range indicators {

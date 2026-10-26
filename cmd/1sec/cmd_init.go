@@ -43,7 +43,7 @@ func cmdInit(args []string) {
 		content = fullConfig()
 	}
 
-	if err := os.WriteFile(*output, []byte(content), core.ConfigFileMode); err != nil {
+	if err := core.WritePrivateConfig(*output, []byte(content)); err != nil {
 		errorf("writing config: %v", err)
 	}
 

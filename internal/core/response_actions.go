@@ -555,32 +555,7 @@ func (e *WebhookExecutor) Execute(ctx context.Context, alert *Alert, rule Respon
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
-	safeDialer := &net.Dialer{Timeout: 5 * time.Second}
-	transport := &http.Transport{
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			host, _, err := net.SplitHostPort(addr)
-			if err != nil {
-				return nil, err
-			}
-			ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
-			if err != nil {
-				return nil, fmt.Errorf("DNS resolution failed for %s: %w", host, err)
-			}
-			for _, ip := range ips {
-				if ip.IP.IsLoopback() || ip.IP.IsPrivate() || ip.IP.IsLinkLocalUnicast() || ip.IP.IsLinkLocalMulticast() {
-					return nil, fmt.Errorf("webhook resolved to private/loopback IP %s (DNS rebinding blocked)", ip.IP)
-				}
-			}
-			return safeDialer.DialContext(ctx, network, addr)
-		},
-	}
-	client := &http.Client{
-		Timeout:   10 * time.Second,
-		Transport: transport,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return fmt.Errorf("webhook redirects are disabled for security")
-		},
-	}
+	client := newWebhookHTTPClient()
 	resp, err := client.Do(req)
 	if err != nil {
 		return webhookURL, "", fmt.Errorf("webhook request failed: %w", err)

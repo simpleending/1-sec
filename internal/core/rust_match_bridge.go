@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"strings"
 	"sync"
 	"time"
@@ -19,6 +20,7 @@ import (
 
 // RustMatchResult is the Go representation of the Rust engine's MatchResult.
 type RustMatchResult struct {
+	Context          map[string]string  `json:"context,omitempty"`
 	EventID          string             `json:"event_id"`
 	Timestamp        time.Time          `json:"timestamp"`
 	Matches          []RustPatternMatch `json:"matches"`
@@ -56,7 +58,7 @@ type RustMatchBridge struct {
 	bus      *EventBus
 
 	// Deduplication: track event IDs we've already generated alerts for
-	// (from Go-side detection) to avoid double-enforcement.
+	// from duplicate sidecar deliveries.
 	seen   map[string]time.Time
 	seenMu sync.Mutex
 }
@@ -89,14 +91,6 @@ func (b *RustMatchBridge) Start(ctx context.Context) error {
 	return nil
 }
 
-// MarkEventSeen records that an event ID has already been processed by Go-side
-// detection, so the bridge can skip it if Rust also detects it.
-func (b *RustMatchBridge) MarkEventSeen(eventID string) {
-	b.seenMu.Lock()
-	b.seen[eventID] = time.Now()
-	b.seenMu.Unlock()
-}
-
 func (b *RustMatchBridge) handleMatchResult(data []byte) {
 	var result RustMatchResult
 	if err := json.Unmarshal(data, &result); err != nil {
@@ -108,14 +102,14 @@ func (b *RustMatchBridge) handleMatchResult(data []byte) {
 		return
 	}
 
-	// Dedup check: skip if Go already generated an alert for this event
+	// Dedup repeated sidecar results without suppressing independent Go analysis.
 	b.seenMu.Lock()
 	if _, exists := b.seen[result.EventID]; exists {
 		b.seenMu.Unlock()
 		b.logger.Debug().
 			Str("event_id", result.EventID).
 			Int("rust_matches", len(result.Matches)).
-			Msg("skipping rust match — Go already processed this event")
+			Msg("skipping duplicate rust match")
 		return
 	}
 	b.seen[result.EventID] = time.Now()
@@ -160,6 +154,14 @@ func (b *RustMatchBridge) handleMatchResult(data []byte) {
 		},
 	}
 
+	if ip := net.ParseIP(result.Context["source_ip"]); ip != nil {
+		alert.Metadata["source_ip"] = ip.String()
+	}
+	for _, key := range []string{"user_id", "account_id", "session_id"} {
+		if value := result.Context[key]; value != "" && len(value) <= 256 {
+			alert.Metadata[key] = value
+		}
+	}
 	b.pipeline.Process(alert)
 
 	b.logger.Info().

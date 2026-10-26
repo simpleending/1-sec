@@ -35,12 +35,35 @@ impl EventPublisher {
     /// Publish a raw packet event to the NATS bus.
     pub async fn publish_packet_event(&self, event: &crate::events::PacketEvent) -> Result<()> {
         let subject = format!("sec.events.packet_capture.{}", event.protocol);
-        let payload = serde_json::to_vec(event)?;
+        let payload = serde_json::to_vec(&packet_wire_event(event))?;
         self.jetstream
             .publish(subject, payload.into())
             .await?
             .await?;
         Ok(())
+    }
+}
+
+fn packet_wire_event(event: &crate::events::PacketEvent) -> serde_json::Value {
+    serde_json::json!({
+        "id": event.id, "timestamp": event.timestamp, "source": "packet_capture",
+        "module": "packet_capture", "type": "network_connection",
+        "severity": if event.anomalies.is_empty() { "INFO" } else { "MEDIUM" },
+        "source_ip": event.src_ip, "dest_ip": event.dst_ip,
+        "summary": "Observed network packet",
+        "details": { "protocol": event.protocol, "src_port": event.src_port,
+            "dest_port": event.dst_port, "length": event.length, "flags": event.flags,
+            "body": event.payload_preview, "packet_anomalies": event.anomalies }
+    })
+}
+
+fn effective_workers(workers: usize) -> usize {
+    if workers == 0 {
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+    } else {
+        workers
     }
 }
 
@@ -52,11 +75,17 @@ impl NatsBridge {
         buffer_size: usize,
         workers: usize,
     ) -> Result<Self> {
-        info!(url = %url, buffer_size = buffer_size, workers = workers, "connecting to NATS");
+        info!(
+            buffer_size = buffer_size,
+            workers = workers,
+            "connecting to NATS"
+        );
 
-        let client = async_nats::connect(url)
-            .await
-            .with_context(|| format!("connecting to NATS at {}", url))?;
+        let options = match std::env::var("ONESEC_NATS_TOKEN") {
+            Ok(token) if !token.is_empty() => async_nats::ConnectOptions::with_token(token),
+            _ => async_nats::ConnectOptions::new(),
+        };
+        let client = options.connect(url).await.context("connecting to NATS")?;
 
         let jetstream = jetstream::new(client.clone());
 
@@ -129,7 +158,8 @@ impl NatsBridge {
         let matcher = self.matcher.clone();
         let js = self.jetstream.clone();
         let shutdown = self.shutdown.clone();
-        let batch_size = self.buffer_size.min(100);
+        let batch_size = self.buffer_size.clamp(1, 100);
+        let workers = effective_workers(workers);
         let semaphore = Arc::new(tokio::sync::Semaphore::new(workers));
 
         tokio::spawn(async move {
@@ -213,6 +243,7 @@ async fn process_message(
     let mut result = scan_field_collection(matcher, &event.id, &fields, false);
     let normalized_result = scan_field_collection(matcher, &event.id, &fields, true);
     merge_match_results(&mut result, normalized_result);
+    enrich_match_context(&mut result, &event);
 
     // Only publish if we found matches
     if result.matches.is_empty() {
@@ -244,6 +275,27 @@ async fn process_message(
         }
         Err(e) => {
             error!(error = %e, "failed to serialize match result");
+        }
+    }
+}
+
+fn enrich_match_context(result: &mut MatchResult, event: &SecurityEvent) {
+    let source = if event.source_ip.is_empty() {
+        &event.source.ip
+    } else {
+        &event.source_ip
+    };
+    if let Ok(ip) = source.parse::<std::net::IpAddr>() {
+        result.context.insert("source_ip".into(), ip.to_string());
+    }
+    for key in ["user_id", "account_id", "session_id"] {
+        if let Some(value) = event
+            .data
+            .get(key)
+            .and_then(|v| v.as_str())
+            .filter(|v| !v.is_empty() && v.len() <= 256)
+        {
+            result.context.insert(key.into(), value.into());
         }
     }
 }
@@ -413,6 +465,51 @@ fn merge_match_results(base: &mut MatchResult, incoming: MatchResult) {
 mod tests {
     use super::*;
     use crate::patterns::all_patterns;
+
+    #[test]
+    fn zero_workers_and_packet_wire_contract() {
+        assert!(effective_workers(0) > 0);
+        assert_eq!(effective_workers(2), 2);
+        let packet = crate::events::PacketEvent {
+            id: "captured-packet".into(),
+            timestamp: "2026-10-26T00:00:00Z".parse().unwrap(),
+            protocol: "tcp".into(),
+            src_ip: "192.0.2.10".into(),
+            src_port: 12345,
+            dst_ip: "198.51.100.20".into(),
+            dst_port: 443,
+            length: 64,
+            flags: vec!["SYN".into()],
+            payload_preview: String::new(),
+            anomalies: vec!["null_scan: no TCP flags set".into()],
+        };
+        let expected: serde_json::Value =
+            serde_json::from_str(include_str!("../testdata/packet_anomaly.json")).unwrap();
+        let actual = packet_wire_event(&packet);
+        assert_eq!(actual, expected);
+        let canonical: SecurityEvent = serde_json::from_value(actual).unwrap();
+        assert_eq!(canonical.event_type, "network_connection");
+        assert_eq!(canonical.data["dest_port"], 443);
+    }
+
+    #[test]
+    fn source_context_reaches_match_result_without_process_authority() {
+        let mut event: SecurityEvent =
+            serde_json::from_str(include_str!("../testdata/go_http_request.json")).unwrap();
+        event.data["user_id"] = serde_json::json!("operator");
+        event.data["process_id"] = serde_json::json!("123");
+        let mut result = matcher().scan(&event.id, &[]);
+        enrich_match_context(&mut result, &event);
+        assert_eq!(
+            result.context.get("source_ip").map(String::as_str),
+            Some("192.0.2.1")
+        );
+        assert_eq!(
+            result.context.get("user_id").map(String::as_str),
+            Some("operator")
+        );
+        assert!(!result.context.contains_key("process_id"));
+    }
 
     fn matcher() -> PatternMatcher {
         PatternMatcher::new(&all_patterns(), 0.0, true)

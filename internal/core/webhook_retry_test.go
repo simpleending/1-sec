@@ -24,7 +24,7 @@ func TestWebhookDispatcher_SuccessfulDelivery(t *testing.T) {
 	cfg.Workers = 2
 	cfg.QueueSize = 10
 
-	d := NewWebhookDispatcher(logger, cfg)
+	d := newTestWebhookDispatcher(logger, cfg)
 	defer d.Stop()
 
 	id := d.Enqueue(server.URL, map[string]interface{}{"test": true}, nil)
@@ -68,7 +68,7 @@ func TestWebhookDispatcher_RetryOn5xx(t *testing.T) {
 		CircuitPause:   1 * time.Second,
 	}
 
-	d := NewWebhookDispatcher(logger, cfg)
+	d := newTestWebhookDispatcher(logger, cfg)
 	defer d.Stop()
 
 	d.Enqueue(server.URL, map[string]interface{}{"retry": true}, nil)
@@ -91,7 +91,7 @@ func TestWebhookDispatcher_DeadLetterOn4xx(t *testing.T) {
 	cfg.Workers = 1
 	cfg.InitialBackoff = 10 * time.Millisecond
 
-	d := NewWebhookDispatcher(logger, cfg)
+	d := newTestWebhookDispatcher(logger, cfg)
 	defer d.Stop()
 
 	d.Enqueue(server.URL, map[string]interface{}{"bad": true}, nil)
@@ -121,7 +121,7 @@ func TestWebhookDispatcher_RetryDeadLetter(t *testing.T) {
 	cfg.Workers = 1
 	cfg.InitialBackoff = 10 * time.Millisecond
 
-	d := NewWebhookDispatcher(logger, cfg)
+	d := newTestWebhookDispatcher(logger, cfg)
 	defer d.Stop()
 
 	d.Enqueue(server.URL, map[string]interface{}{"test": true}, nil)
@@ -157,7 +157,7 @@ func TestWebhookDispatcher_CustomHeaders(t *testing.T) {
 	cfg := DefaultWebhookRetryConfig()
 	cfg.Workers = 1
 
-	d := NewWebhookDispatcher(logger, cfg)
+	d := newTestWebhookDispatcher(logger, cfg)
 	defer d.Stop()
 
 	d.Enqueue(server.URL, map[string]interface{}{}, map[string]string{"X-Custom": "test-value"})
@@ -186,7 +186,7 @@ func TestWebhookDispatcher_PayloadIntegrity(t *testing.T) {
 	cfg := DefaultWebhookRetryConfig()
 	cfg.Workers = 1
 
-	d := NewWebhookDispatcher(logger, cfg)
+	d := newTestWebhookDispatcher(logger, cfg)
 	defer d.Stop()
 
 	payload := map[string]interface{}{
@@ -203,4 +203,9 @@ func TestWebhookDispatcher_PayloadIntegrity(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for webhook delivery")
 	}
+}
+
+func newTestWebhookDispatcher(logger zerolog.Logger, cfg WebhookRetryConfig) *WebhookDispatcher {
+	cfg.client = &http.Client{Timeout: time.Second}
+	return NewWebhookDispatcher(logger, cfg)
 }

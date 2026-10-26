@@ -111,14 +111,17 @@ type ServerConfig struct {
 
 // SyslogConfig holds syslog ingestion settings.
 type SyslogConfig struct {
-	Enabled  bool   `yaml:"enabled"`
-	Protocol string `yaml:"protocol"` // "udp", "tcp", or "both"
-	Host     string `yaml:"host"`
-	Port     int    `yaml:"port"`
+	MaxConnections     int    `yaml:"max_connections"`
+	ReadTimeoutSeconds int    `yaml:"read_timeout_seconds"`
+	Enabled            bool   `yaml:"enabled"`
+	Protocol           string `yaml:"protocol"` // "udp", "tcp", or "both"
+	Host               string `yaml:"host"`
+	Port               int    `yaml:"port"`
 }
 
 // BusConfig holds NATS event bus settings.
 type BusConfig struct {
+	Token     string `yaml:"token,omitempty"`
 	URL       string `yaml:"url"`
 	Embedded  bool   `yaml:"embedded"`
 	DataDir   string `yaml:"data_dir"`
@@ -345,7 +348,26 @@ func SaveConfig(cfg *Config, path string) error {
 	if err != nil {
 		return fmt.Errorf("marshaling config: %w", err)
 	}
-	return os.WriteFile(path, data, ConfigFileMode)
+	return WritePrivateConfig(path, data)
+}
+
+// WritePrivateConfig also repairs permissions on existing secret-bearing files.
+func WritePrivateConfig(path string, data []byte) error {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, ConfigFileMode)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if err := RestrictPrivatePath(f.Name(), false); err != nil {
+		return err
+	}
+	if err := f.Truncate(0); err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		return err
+	}
+	return f.Close()
 }
 
 // IsModuleEnabled checks if a module is enabled in the configuration.

@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/1sec-project/1sec/internal/core"
@@ -17,21 +18,24 @@ import (
 // SyslogServer listens for syslog messages (RFC 5424 / RFC 3164) over UDP and/or TCP,
 // parses them into SecurityEvents, and publishes them to the NATS event bus.
 type SyslogServer struct {
-	cfg     *core.SyslogConfig
-	bus     *core.EventBus
-	logger  zerolog.Logger
-	ctx     context.Context
-	cancel  context.CancelFunc
-	udpConn *net.UDPConn
-	tcpLn   net.Listener
+	cfg         *core.SyslogConfig
+	bus         *core.EventBus
+	logger      zerolog.Logger
+	ctx         context.Context
+	cancel      context.CancelFunc
+	udpConn     *net.UDPConn
+	tcpLn       net.Listener
+	mu          sync.Mutex
+	connections map[net.Conn]struct{}
 }
 
 // NewSyslogServer creates a new syslog ingestion server.
 func NewSyslogServer(cfg *core.SyslogConfig, bus *core.EventBus, logger zerolog.Logger) *SyslogServer {
 	return &SyslogServer{
-		cfg:    cfg,
-		bus:    bus,
-		logger: logger.With().Str("component", "syslog_ingest").Logger(),
+		cfg:         cfg,
+		bus:         bus,
+		logger:      logger.With().Str("component", "syslog_ingest").Logger(),
+		connections: make(map[net.Conn]struct{}),
 	}
 }
 
@@ -69,6 +73,11 @@ func (s *SyslogServer) Stop() error {
 	if s.tcpLn != nil {
 		s.tcpLn.Close()
 	}
+	s.mu.Lock()
+	for conn := range s.connections {
+		conn.Close()
+	}
+	s.mu.Unlock()
 	s.logger.Info().Msg("syslog ingestion stopped")
 	return nil
 }
@@ -144,6 +153,18 @@ func (s *SyslogServer) startTCP(addr string) error {
 				continue
 			}
 
+			s.mu.Lock()
+			limit := s.cfg.MaxConnections
+			if limit <= 0 {
+				limit = 128
+			}
+			if s.ctx.Err() != nil || len(s.connections) >= limit {
+				s.mu.Unlock()
+				conn.Close()
+				continue
+			}
+			s.connections[conn] = struct{}{}
+			s.mu.Unlock()
 			go s.handleTCPConn(conn)
 		}
 	}()
@@ -154,6 +175,14 @@ func (s *SyslogServer) startTCP(addr string) error {
 
 func (s *SyslogServer) handleTCPConn(conn net.Conn) {
 	defer conn.Close()
+	defer func() { s.mu.Lock(); delete(s.connections, conn); s.mu.Unlock() }()
+	timeout := time.Duration(s.cfg.ReadTimeoutSeconds) * time.Second
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+		return
+	}
 
 	sourceIP := ""
 	if addr, ok := conn.RemoteAddr().(*net.TCPAddr); ok {
@@ -170,6 +199,9 @@ func (s *SyslogServer) handleTCPConn(conn net.Conn) {
 		default:
 		}
 		s.processMessage(scanner.Text(), sourceIP)
+		if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+			return
+		}
 	}
 
 	if err := scanner.Err(); err != nil && s.ctx.Err() == nil {

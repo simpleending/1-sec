@@ -1,6 +1,37 @@
 package main
 
-import "testing"
+import (
+	"io"
+	"net/http"
+	"strings"
+	"testing"
+)
+
+type releaseTransport func(*http.Request) (*http.Response, error)
+
+func (f releaseTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+func TestUpdateCheckDoesNotDownloadOrReplaceCode(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+	t.Setenv(updateEnvDisable, "")
+	old := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = old })
+	calls := 0
+	http.DefaultTransport = releaseTransport(func(r *http.Request) (*http.Response, error) {
+		calls++
+		if !strings.HasSuffix(r.URL.Path, "/releases/latest") {
+			t.Fatal("executable download attempted", r.URL)
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"tag_name":"v999.0.0","assets":[{"name":"binary","browser_download_url":"https://malicious.example/binary"}]}`)), Header: make(http.Header)}, nil
+	})
+	if selfUpdate("0.0.1", true) {
+		t.Fatal("unexpected binary replacement")
+	}
+	if calls != 1 {
+		t.Fatal(calls)
+	}
+}
 
 func TestIsNewer(t *testing.T) {
 	tests := []struct {

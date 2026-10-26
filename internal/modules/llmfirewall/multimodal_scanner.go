@@ -291,16 +291,29 @@ var exifTextTags = map[uint16]string{
 }
 
 func parseIFD(data []byte, offset int, bo binary.ByteOrder, depth int) []MultimodalDetection {
+	remaining := 4096
+	return parseIFDBounded(data, offset, bo, depth, make(map[int]int), &remaining)
+}
+
+func parseIFDBounded(data []byte, offset int, bo binary.ByteOrder, depth int, visited map[int]int, remaining *int) []MultimodalDetection {
 	var detections []MultimodalDetection
 
-	if depth > 4 || offset < 0 || offset+2 > len(data) {
+	if depth > 4 || offset < 0 || offset > len(data)-2 || *remaining <= 0 {
 		return nil
 	}
+	if previousDepth, seen := visited[offset]; seen && previousDepth <= depth {
+		return nil
+	}
+	visited[offset] = depth
 
 	numEntries := int(bo.Uint16(data[offset : offset+2]))
 	pos := offset + 2
 
 	for i := 0; i < numEntries && pos+12 <= len(data); i++ {
+		if *remaining <= 0 {
+			return detections
+		}
+		*remaining--
 		tag := bo.Uint16(data[pos : pos+2])
 		dataType := bo.Uint16(data[pos+2 : pos+4])
 		count := int(bo.Uint32(data[pos+4 : pos+8]))
@@ -318,7 +331,7 @@ func parseIFD(data []byte, offset int, bo binary.ByteOrder, depth int) []Multimo
 		// Follow IFD pointers (ExifIFD, GPSIFD)
 		if tag == 0x8769 || tag == 0x8825 {
 			subOffset := int(bo.Uint32(data[pos+8 : pos+12]))
-			detections = append(detections, parseIFD(data, subOffset, bo, depth+1)...)
+			detections = append(detections, parseIFDBounded(data, subOffset, bo, depth+1, visited, remaining)...)
 		}
 
 		pos += 12
@@ -328,7 +341,7 @@ func parseIFD(data []byte, offset int, bo binary.ByteOrder, depth int) []Multimo
 	if pos+4 <= len(data) {
 		nextIFD := int(bo.Uint32(data[pos : pos+4]))
 		if nextIFD > 0 {
-			detections = append(detections, parseIFD(data, nextIFD, bo, depth+1)...)
+			detections = append(detections, parseIFDBounded(data, nextIFD, bo, depth+1, visited, remaining)...)
 		}
 	}
 
@@ -1337,6 +1350,9 @@ func tokenizePDFLine(line string) []string {
 			}
 			if i > start {
 				tokens = append(tokens, line[start:i])
+			} else {
+				// Malformed or dictionary delimiters must still consume input.
+				i++
 			}
 		}
 	}

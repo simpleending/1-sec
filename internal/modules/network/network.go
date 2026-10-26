@@ -233,6 +233,22 @@ func (g *Guardian) handleDNSEvent(event *core.SecurityEvent) {
 
 // handleConnectionEvent detects C2 beaconing, covert channels, and suspicious connections.
 func (g *Guardian) handleConnectionEvent(event *core.SecurityEvent) {
+	if event.Source == "packet_capture" {
+		var anomalies []string
+		switch values := event.Details["packet_anomalies"].(type) {
+		case []string:
+			anomalies = values
+		case []interface{}:
+			for _, value := range values {
+				if text, ok := value.(string); ok {
+					anomalies = append(anomalies, text)
+				}
+			}
+		}
+		if len(anomalies) > 0 {
+			g.raiseAlert(event, core.SeverityMedium, "Captured Packet Anomaly", strings.Join(anomalies, "; "), "packet_anomaly")
+		}
+	}
 	sourceIP := event.SourceIP
 	destIP := event.DestIP
 	destPort := getIntDetail(event, "dest_port")

@@ -1,8 +1,13 @@
 package core
 
 import (
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,6 +24,7 @@ type EventBus struct {
 	logger zerolog.Logger
 	mu     sync.RWMutex
 	subs   []*nats.Subscription
+	token  string
 
 	// Metrics
 	metrics *BusMetrics
@@ -46,14 +52,29 @@ func NewEventBus(cfg *BusConfig, logger zerolog.Logger) (*EventBus, error) {
 		if err := os.MkdirAll(cfg.DataDir, 0700); err != nil {
 			return nil, fmt.Errorf("creating NATS data dir: %w", err)
 		}
+		if err := RestrictPrivatePath(cfg.DataDir, true); err != nil {
+			return nil, fmt.Errorf("securing NATS data dir: %w", err)
+		}
+		var err error
+		bus.token, err = ReadEmbeddedBusToken(cfg.DataDir)
+		if errors.Is(err, os.ErrNotExist) {
+			secret := make([]byte, 32)
+			if _, err := rand.Read(secret); err != nil {
+				return nil, fmt.Errorf("creating NATS credential: %w", err)
+			}
+			bus.token = hex.EncodeToString(secret)
+		} else if err != nil {
+			return nil, err
+		}
 
 		opts := &server.Options{
-			Host:      "127.0.0.1",
-			Port:      cfg.Port,
-			JetStream: true,
-			StoreDir:  cfg.DataDir,
-			NoLog:     true,
-			NoSigs:    true,
+			Host:          "127.0.0.1",
+			Port:          cfg.Port,
+			JetStream:     true,
+			StoreDir:      cfg.DataDir,
+			NoLog:         true,
+			NoSigs:        true,
+			Authorization: bus.token,
 		}
 
 		ns, err := server.NewServer(opts)
@@ -68,15 +89,25 @@ func NewEventBus(cfg *BusConfig, logger zerolog.Logger) (*EventBus, error) {
 		}
 
 		bus.ns = ns
+		if err := writeBusToken(cfg.DataDir, bus.token); err != nil {
+			ns.Shutdown()
+			return nil, err
+		}
 		bus.logger.Info().Int("port", cfg.Port).Msg("embedded NATS server started")
 	}
 
 	url := cfg.URL
 	if cfg.Embedded {
-		url = fmt.Sprintf("nats://127.0.0.1:%d", cfg.Port)
+		url = bus.ns.ClientURL()
+	} else {
+		bus.token = cfg.Token
+		if bus.token == "" {
+			bus.token = os.Getenv("ONESEC_NATS_TOKEN")
+		}
 	}
 
 	nc, err := nats.Connect(url,
+		nats.Token(bus.token),
 		nats.RetryOnFailedConnect(true),
 		nats.MaxReconnects(60),
 		nats.ReconnectWait(time.Second),
@@ -156,6 +187,36 @@ func NewEventBus(cfg *BusConfig, logger zerolog.Logger) (*EventBus, error) {
 
 	bus.logger.Info().Str("url", url).Msg("connected to NATS JetStream")
 	return bus, nil
+}
+
+// ReadEmbeddedBusToken lets same-account collectors join the running instance.
+func ReadEmbeddedBusToken(dataDir string) (string, error) {
+	data, err := os.ReadFile(filepath.Join(dataDir, "connection.token"))
+	if err != nil {
+		return "", fmt.Errorf("reading embedded NATS credential (start the engine first): %w", err)
+	}
+	if token := strings.TrimSpace(string(data)); len(token) == 64 {
+		return token, nil
+	}
+	return "", fmt.Errorf("invalid embedded NATS credential")
+}
+
+func writeBusToken(dataDir, token string) error {
+	f, err := os.OpenFile(filepath.Join(dataDir, "connection.token"), os.O_CREATE|os.O_WRONLY, 0600)
+	if err != nil {
+		return fmt.Errorf("creating NATS credential file: %w", err)
+	}
+	defer f.Close()
+	if err := RestrictPrivatePath(f.Name(), false); err != nil {
+		return err
+	}
+	if err := f.Truncate(0); err != nil {
+		return err
+	}
+	if _, err := f.WriteString(token); err != nil {
+		return err
+	}
+	return f.Sync()
 }
 
 // PublishEvent publishes a SecurityEvent to the event bus.

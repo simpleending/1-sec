@@ -341,7 +341,7 @@ type deepAnalysisResult struct {
 }
 
 func (e *Engine) runTriage(event *core.SecurityEvent) (float64, string, error) {
-	eventJSON, err := event.Marshal()
+	eventJSON, err := aiEventMetadata(event)
 	if err != nil {
 		return 0, "", fmt.Errorf("marshaling event: %w", err)
 	}
@@ -376,7 +376,7 @@ Where score is threat likelihood (0=benign, 1=critical threat), category is the 
 func (e *Engine) runDeepAnalysis(req *analysisRequest) (*deepAnalysisResult, error) {
 	eventsData := make([]json.RawMessage, 0, len(req.events))
 	for _, ev := range req.events {
-		data, err := ev.Marshal()
+		data, err := aiEventMetadata(ev)
 		if err != nil {
 			continue
 		}
@@ -449,20 +449,23 @@ func (e *Engine) callGemini(url, prompt string, maxTokens int) (string, error) {
 				return "", fmt.Errorf("no healthy API keys available")
 			}
 
-			fullURL := fmt.Sprintf("%s?key=%s", url, apiKey)
-			req, err := http.NewRequestWithContext(e.ctx, http.MethodPost, fullURL, bytes.NewReader(body))
+			req, err := http.NewRequestWithContext(e.ctx, http.MethodPost, url, bytes.NewReader(body))
 			if err != nil {
 				return "", fmt.Errorf("creating request: %w", err)
 			}
 			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("x-goog-api-key", apiKey)
 
 			resp, err := e.httpClient.Do(req)
 			if err != nil {
 				return "", fmt.Errorf("calling Gemini API: %w", err)
 			}
 
-			respBody, err := io.ReadAll(resp.Body)
+			respBody, err := io.ReadAll(io.LimitReader(resp.Body, (1<<20)+1))
 			resp.Body.Close()
+			if len(respBody) > 1<<20 {
+				return "", fmt.Errorf("Gemini response exceeds limit")
+			}
 			if err != nil {
 				return "", fmt.Errorf("reading response: %w", err)
 			}

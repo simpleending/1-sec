@@ -17,7 +17,7 @@ func (s *Server) handleEnforceStatus(w http.ResponseWriter, r *http.Request) {
 
 	re := s.engine.ResponseEngine
 	if re == nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{
+		s.writeEnforcementJSON(w, http.StatusOK, map[string]interface{}{
 			"enabled": false,
 			"dry_run": false,
 			"stats":   map[string]interface{}{"total_policies": 0, "total_records": 0},
@@ -31,7 +31,7 @@ func (s *Server) handleEnforceStatus(w http.ResponseWriter, r *http.Request) {
 	if cfg != nil {
 		allowList = cfg.GlobalAllowList
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	s.writeEnforcementJSON(w, http.StatusOK, map[string]interface{}{
 		"enabled":           cfg != nil && cfg.Enabled,
 		"dry_run":           cfg != nil && cfg.GetDryRun(),
 		"preset":            presetName(cfg),
@@ -57,11 +57,11 @@ func (s *Server) handleEnforcePolicies(w http.ResponseWriter, r *http.Request) {
 
 	re := s.engine.ResponseEngine
 	if re == nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"policies": map[string]interface{}{}})
+		s.writeEnforcementJSON(w, http.StatusOK, map[string]interface{}{"policies": map[string]interface{}{}})
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{"policies": re.GetPolicies()})
+	s.writeEnforcementJSON(w, http.StatusOK, map[string]interface{}{"policies": re.GetPolicies()})
 }
 
 // handleEnforcePolicyAction handles enable/disable for a specific module's policy.
@@ -74,7 +74,7 @@ func (s *Server) handleEnforcePolicyAction(w http.ResponseWriter, r *http.Reques
 
 	re := s.engine.ResponseEngine
 	if re == nil {
-		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "enforcement engine not configured"})
+		s.writeEnforcementJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "enforcement engine not configured"})
 		return
 	}
 
@@ -82,7 +82,7 @@ func (s *Server) handleEnforcePolicyAction(w http.ResponseWriter, r *http.Reques
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/enforce/policies/")
 	parts := strings.SplitN(path, "/", 2)
 	if len(parts) != 2 {
-		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "expected /api/v1/enforce/policies/{module}/{enable|disable}"})
+		s.writeEnforcementJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "expected /api/v1/enforce/policies/{module}/{enable|disable}"})
 		return
 	}
 
@@ -93,19 +93,19 @@ func (s *Server) handleEnforcePolicyAction(w http.ResponseWriter, r *http.Reques
 	case "enable":
 		if re.SetPolicyEnabled(module, true) {
 			s.logger.Warn().Str("module", module).Bool("enabled", true).Str("ip", r.RemoteAddr).Msg("enforcement policy toggled via API")
-			writeJSON(w, http.StatusOK, map[string]interface{}{"module": module, "enabled": true})
+			s.writeEnforcementJSON(w, http.StatusOK, map[string]interface{}{"module": module, "enabled": true})
 		} else {
-			writeJSON(w, http.StatusNotFound, map[string]interface{}{"error": "no policy found for module: " + module})
+			s.writeEnforcementJSON(w, http.StatusNotFound, map[string]interface{}{"error": "no policy found for module: " + module})
 		}
 	case "disable":
 		if re.SetPolicyEnabled(module, false) {
 			s.logger.Warn().Str("module", module).Bool("enabled", false).Str("ip", r.RemoteAddr).Msg("enforcement policy toggled via API")
-			writeJSON(w, http.StatusOK, map[string]interface{}{"module": module, "enabled": false})
+			s.writeEnforcementJSON(w, http.StatusOK, map[string]interface{}{"module": module, "enabled": false})
 		} else {
-			writeJSON(w, http.StatusNotFound, map[string]interface{}{"error": "no policy found for module: " + module})
+			s.writeEnforcementJSON(w, http.StatusNotFound, map[string]interface{}{"error": "no policy found for module: " + module})
 		}
 	default:
-		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "unknown action: " + action + " (use enable or disable)"})
+		s.writeEnforcementJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "unknown action: " + action + " (use enable or disable)"})
 	}
 }
 
@@ -118,7 +118,7 @@ func (s *Server) handleEnforceHistory(w http.ResponseWriter, r *http.Request) {
 
 	re := s.engine.ResponseEngine
 	if re == nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"records": []interface{}{}})
+		s.writeEnforcementJSON(w, http.StatusOK, map[string]interface{}{"records": []interface{}{}})
 		return
 	}
 
@@ -132,7 +132,7 @@ func (s *Server) handleEnforceHistory(w http.ResponseWriter, r *http.Request) {
 	moduleFilter := r.URL.Query().Get("module")
 	records := re.GetRecords(limit, moduleFilter)
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	s.writeEnforcementJSON(w, http.StatusOK, map[string]interface{}{
 		"records": records,
 		"count":   len(records),
 	})
@@ -149,7 +149,7 @@ func (s *Server) handleEnforceDryRun(w http.ResponseWriter, r *http.Request) {
 	mode := strings.TrimPrefix(r.URL.Path, "/api/v1/enforce/dry-run/")
 	cfg := s.engine.Config.Enforcement
 	if cfg == nil {
-		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "enforcement not configured"})
+		s.writeEnforcementJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "enforcement not configured"})
 		return
 	}
 
@@ -162,7 +162,7 @@ func (s *Server) handleEnforceDryRun(w http.ResponseWriter, r *http.Request) {
 			Bool("new", true).
 			Str("ip", r.RemoteAddr).
 			Msg("enforcement dry-run toggled via API")
-		writeJSON(w, http.StatusOK, map[string]interface{}{"dry_run": true, "previous": previous, "message": "global dry-run enabled"})
+		s.writeEnforcementJSON(w, http.StatusOK, map[string]interface{}{"dry_run": true, "previous": previous, "message": "global dry-run enabled"})
 	case "off":
 		previous := cfg.GetDryRun()
 		cfg.SetDryRun(false)
@@ -171,9 +171,9 @@ func (s *Server) handleEnforceDryRun(w http.ResponseWriter, r *http.Request) {
 			Bool("new", false).
 			Str("ip", r.RemoteAddr).
 			Msg("enforcement dry-run toggled via API — enforcement is LIVE")
-		writeJSON(w, http.StatusOK, map[string]interface{}{"dry_run": false, "previous": previous, "message": "global dry-run disabled — enforcement is LIVE"})
+		s.writeEnforcementJSON(w, http.StatusOK, map[string]interface{}{"dry_run": false, "previous": previous, "message": "global dry-run disabled — enforcement is LIVE"})
 	default:
-		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "use /dry-run/on or /dry-run/off"})
+		s.writeEnforcementJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "use /dry-run/on or /dry-run/off"})
 	}
 }
 
@@ -187,7 +187,7 @@ func (s *Server) handleEnforceTest(w http.ResponseWriter, r *http.Request) {
 
 	re := s.engine.ResponseEngine
 	if re == nil {
-		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "enforcement engine not configured"})
+		s.writeEnforcementJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "enforcement engine not configured"})
 		return
 	}
 
@@ -200,7 +200,7 @@ func (s *Server) handleEnforceTest(w http.ResponseWriter, r *http.Request) {
 		policy, ok = policies["*"]
 	}
 	if !ok {
-		writeJSON(w, http.StatusNotFound, map[string]interface{}{
+		s.writeEnforcementJSON(w, http.StatusNotFound, map[string]interface{}{
 			"error":   "no policy found for module: " + module,
 			"actions": []interface{}{},
 		})
@@ -220,7 +220,7 @@ func (s *Server) handleEnforceTest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	s.writeEnforcementJSON(w, http.StatusOK, map[string]interface{}{
 		"module":         module,
 		"test_severity":  severity.String(),
 		"policy_enabled": policy.Enabled,
@@ -240,20 +240,20 @@ func (s *Server) handleEnforceApprove(w http.ResponseWriter, r *http.Request) {
 
 	re := s.engine.ResponseEngine
 	if re == nil || re.ApprovalGate == nil {
-		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "approval gate not configured"})
+		s.writeEnforcementJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "approval gate not configured"})
 		return
 	}
 
 	id := strings.TrimPrefix(r.URL.Path, "/api/v1/enforce/approve/")
 	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "approval ID required"})
+		s.writeEnforcementJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "approval ID required"})
 		return
 	}
 
 	decidedBy := "api:" + r.RemoteAddr
 	pa, err := re.ApprovalGate.Approve(id, decidedBy)
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]interface{}{"error": err.Error()})
+		s.writeEnforcementJSON(w, http.StatusNotFound, map[string]interface{}{"error": err.Error()})
 		return
 	}
 
@@ -264,7 +264,7 @@ func (s *Server) handleEnforceApprove(w http.ResponseWriter, r *http.Request) {
 		Str("decided_by", decidedBy).
 		Msg("action approved via API")
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	s.writeEnforcementJSON(w, http.StatusOK, map[string]interface{}{
 		"id":         pa.ID,
 		"action":     string(pa.Action),
 		"target":     pa.Target,
@@ -283,20 +283,20 @@ func (s *Server) handleEnforceReject(w http.ResponseWriter, r *http.Request) {
 
 	re := s.engine.ResponseEngine
 	if re == nil || re.ApprovalGate == nil {
-		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "approval gate not configured"})
+		s.writeEnforcementJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "approval gate not configured"})
 		return
 	}
 
 	id := strings.TrimPrefix(r.URL.Path, "/api/v1/enforce/reject/")
 	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "approval ID required"})
+		s.writeEnforcementJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "approval ID required"})
 		return
 	}
 
 	decidedBy := "api:" + r.RemoteAddr
 	pa, err := re.ApprovalGate.Reject(id, decidedBy)
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]interface{}{"error": err.Error()})
+		s.writeEnforcementJSON(w, http.StatusNotFound, map[string]interface{}{"error": err.Error()})
 		return
 	}
 
@@ -306,7 +306,7 @@ func (s *Server) handleEnforceReject(w http.ResponseWriter, r *http.Request) {
 		Str("decided_by", decidedBy).
 		Msg("action rejected via API")
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	s.writeEnforcementJSON(w, http.StatusOK, map[string]interface{}{
 		"id":         pa.ID,
 		"action":     string(pa.Action),
 		"target":     pa.Target,
@@ -325,24 +325,24 @@ func (s *Server) handleEnforceRollback(w http.ResponseWriter, r *http.Request) {
 
 	re := s.engine.ResponseEngine
 	if re == nil {
-		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "enforcement engine not configured"})
+		s.writeEnforcementJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "enforcement engine not configured"})
 		return
 	}
 
 	id := strings.TrimPrefix(r.URL.Path, "/api/v1/enforce/rollback/")
 	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "record ID required"})
+		s.writeEnforcementJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "record ID required"})
 		return
 	}
 
 	record := re.FindRecord(id)
 	if record == nil {
-		writeJSON(w, http.StatusNotFound, map[string]interface{}{"error": "enforcement record not found"})
+		s.writeEnforcementJSON(w, http.StatusNotFound, map[string]interface{}{"error": "enforcement record not found"})
 		return
 	}
 
 	if record.Status != core.ActionStatusSuccess {
-		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
+		s.writeEnforcementJSON(w, http.StatusBadRequest, map[string]interface{}{
 			"error":  "can only roll back successful actions",
 			"status": string(record.Status),
 		})
@@ -359,7 +359,7 @@ func (s *Server) handleEnforceRollback(w http.ResponseWriter, r *http.Request) {
 			Str("target", record.Target).
 			Str("ip", r.RemoteAddr).
 			Msg("enforcement action rolled back via API")
-		writeJSON(w, http.StatusOK, map[string]interface{}{
+		s.writeEnforcementJSON(w, http.StatusOK, map[string]interface{}{
 			"id":       id,
 			"action":   string(record.Action),
 			"target":   record.Target,
@@ -367,7 +367,7 @@ func (s *Server) handleEnforceRollback(w http.ResponseWriter, r *http.Request) {
 		})
 	case core.ActionDisableUser:
 		if err := core.ExportedEnableUser(record.Target, s.logger); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
+			s.writeEnforcementJSON(w, http.StatusInternalServerError, map[string]interface{}{
 				"error":  "rollback failed: " + err.Error(),
 				"action": string(record.Action),
 				"target": record.Target,
@@ -381,7 +381,7 @@ func (s *Server) handleEnforceRollback(w http.ResponseWriter, r *http.Request) {
 			Str("target", record.Target).
 			Str("ip", r.RemoteAddr).
 			Msg("enforcement action rolled back via API")
-		writeJSON(w, http.StatusOK, map[string]interface{}{
+		s.writeEnforcementJSON(w, http.StatusOK, map[string]interface{}{
 			"id":       id,
 			"action":   string(record.Action),
 			"target":   record.Target,
@@ -389,7 +389,7 @@ func (s *Server) handleEnforceRollback(w http.ResponseWriter, r *http.Request) {
 		})
 	case core.ActionQuarantineFile:
 		if err := core.ExportedRestoreFile(record.Details, s.logger); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
+			s.writeEnforcementJSON(w, http.StatusInternalServerError, map[string]interface{}{
 				"error":  "rollback failed: " + err.Error(),
 				"action": string(record.Action),
 				"target": record.Target,
@@ -403,14 +403,14 @@ func (s *Server) handleEnforceRollback(w http.ResponseWriter, r *http.Request) {
 			Str("target", record.Target).
 			Str("ip", r.RemoteAddr).
 			Msg("enforcement action rolled back via API")
-		writeJSON(w, http.StatusOK, map[string]interface{}{
+		s.writeEnforcementJSON(w, http.StatusOK, map[string]interface{}{
 			"id":       id,
 			"action":   string(record.Action),
 			"target":   record.Target,
 			"rollback": "completed",
 		})
 	default:
-		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
+		s.writeEnforcementJSON(w, http.StatusBadRequest, map[string]interface{}{
 			"error":  "rollback not supported for this action type",
 			"action": string(record.Action),
 		})
@@ -427,7 +427,7 @@ func (s *Server) handleEnforceApprovalsPending(w http.ResponseWriter, r *http.Re
 
 	re := s.engine.ResponseEngine
 	if re == nil || re.ApprovalGate == nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{
+		s.writeEnforcementJSON(w, http.StatusOK, map[string]interface{}{
 			"pending": []interface{}{},
 			"count":   0,
 			"message": "approval gate not configured",
@@ -436,7 +436,7 @@ func (s *Server) handleEnforceApprovalsPending(w http.ResponseWriter, r *http.Re
 	}
 
 	pending := re.ApprovalGate.GetPending()
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	s.writeEnforcementJSON(w, http.StatusOK, map[string]interface{}{
 		"pending": pending,
 		"count":   len(pending),
 	})
@@ -452,7 +452,7 @@ func (s *Server) handleEnforceApprovalsHistory(w http.ResponseWriter, r *http.Re
 
 	re := s.engine.ResponseEngine
 	if re == nil || re.ApprovalGate == nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{
+		s.writeEnforcementJSON(w, http.StatusOK, map[string]interface{}{
 			"history": []interface{}{},
 			"count":   0,
 		})
@@ -467,7 +467,7 @@ func (s *Server) handleEnforceApprovalsHistory(w http.ResponseWriter, r *http.Re
 	}
 
 	history := re.ApprovalGate.GetHistory(limit)
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	s.writeEnforcementJSON(w, http.StatusOK, map[string]interface{}{
 		"history": history,
 		"count":   len(history),
 	})
@@ -483,13 +483,13 @@ func (s *Server) handleEnforceApprovalsStats(w http.ResponseWriter, r *http.Requ
 
 	re := s.engine.ResponseEngine
 	if re == nil || re.ApprovalGate == nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{
+		s.writeEnforcementJSON(w, http.StatusOK, map[string]interface{}{
 			"enabled": false,
 		})
 		return
 	}
 
-	writeJSON(w, http.StatusOK, re.ApprovalGate.Stats())
+	s.writeEnforcementJSON(w, http.StatusOK, re.ApprovalGate.Stats())
 }
 
 // handleEnforceWebhookStats returns webhook dispatcher statistics.
@@ -502,13 +502,13 @@ func (s *Server) handleEnforceWebhookStats(w http.ResponseWriter, r *http.Reques
 
 	re := s.engine.ResponseEngine
 	if re == nil || re.Dispatcher == nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{
+		s.writeEnforcementJSON(w, http.StatusOK, map[string]interface{}{
 			"message": "webhook dispatcher not configured",
 		})
 		return
 	}
 
-	writeJSON(w, http.StatusOK, re.Dispatcher.Stats())
+	s.writeEnforcementJSON(w, http.StatusOK, re.Dispatcher.Stats())
 }
 
 // handleEnforceWebhookDeadLetters returns failed webhook deliveries.
@@ -521,7 +521,7 @@ func (s *Server) handleEnforceWebhookDeadLetters(w http.ResponseWriter, r *http.
 
 	re := s.engine.ResponseEngine
 	if re == nil || re.Dispatcher == nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{
+		s.writeEnforcementJSON(w, http.StatusOK, map[string]interface{}{
 			"dead_letters": []interface{}{},
 			"count":        0,
 		})
@@ -536,7 +536,7 @@ func (s *Server) handleEnforceWebhookDeadLetters(w http.ResponseWriter, r *http.
 	}
 
 	dls := re.Dispatcher.GetDeadLetters(limit)
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	s.writeEnforcementJSON(w, http.StatusOK, map[string]interface{}{
 		"dead_letters": dls,
 		"count":        len(dls),
 	})
@@ -552,20 +552,20 @@ func (s *Server) handleEnforceWebhookRetry(w http.ResponseWriter, r *http.Reques
 
 	re := s.engine.ResponseEngine
 	if re == nil || re.Dispatcher == nil {
-		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "webhook dispatcher not configured"})
+		s.writeEnforcementJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "webhook dispatcher not configured"})
 		return
 	}
 
 	id := strings.TrimPrefix(r.URL.Path, "/api/v1/enforce/webhooks/retry/")
 	if id == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "delivery ID required"})
+		s.writeEnforcementJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "delivery ID required"})
 		return
 	}
 
 	if re.Dispatcher.RetryDeadLetter(id) {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"id": id, "status": "re-enqueued"})
+		s.writeEnforcementJSON(w, http.StatusOK, map[string]interface{}{"id": id, "status": "re-enqueued"})
 	} else {
-		writeJSON(w, http.StatusNotFound, map[string]interface{}{"error": "dead letter not found or queue full"})
+		s.writeEnforcementJSON(w, http.StatusNotFound, map[string]interface{}{"error": "dead letter not found or queue full"})
 	}
 }
 
@@ -585,7 +585,7 @@ func (s *Server) handleEnforceConfig(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleEnforceConfigGet(w http.ResponseWriter, r *http.Request) {
 	cfg := s.engine.Config.Enforcement
 	if cfg == nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{
+		s.writeEnforcementJSON(w, http.StatusOK, map[string]interface{}{
 			"enabled": false,
 			"message": "enforcement not configured",
 		})
@@ -635,7 +635,7 @@ func (s *Server) handleEnforceConfigGet(w http.ResponseWriter, r *http.Request) 
 		approvalGate["max_pending"] = gateConfig.MaxPending
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	s.writeEnforcementJSON(w, http.StatusOK, map[string]interface{}{
 		"enabled":           cfg.Enabled,
 		"dry_run":           cfg.GetDryRun(),
 		"preset":            cfg.Preset,
@@ -650,7 +650,7 @@ func (s *Server) handleEnforceConfigGet(w http.ResponseWriter, r *http.Request) 
 func (s *Server) handleEnforceConfigPost(w http.ResponseWriter, r *http.Request) {
 	cfg := s.engine.Config.Enforcement
 	if cfg == nil {
-		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "enforcement not configured"})
+		s.writeEnforcementJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "enforcement not configured"})
 		return
 	}
 
@@ -660,7 +660,7 @@ func (s *Server) handleEnforceConfigPost(w http.ResponseWriter, r *http.Request)
 		RequireApproval  []string `json:"require_approval,omitempty"`
 	}
 	if err := decodeJSONBody(r, &body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": err.Error()})
+		s.writeEnforcementJSON(w, http.StatusBadRequest, map[string]interface{}{"error": err.Error()})
 		return
 	}
 
@@ -669,7 +669,7 @@ func (s *Server) handleEnforceConfigPost(w http.ResponseWriter, r *http.Request)
 		gate = s.engine.ResponseEngine.ApprovalGate
 	}
 	if err := core.UpdateApprovalSettings(cfg, gate, body.AutoApproveAbove, body.RequireApproval); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": err.Error()})
+		s.writeEnforcementJSON(w, http.StatusBadRequest, map[string]interface{}{"error": err.Error()})
 		return
 	}
 	changes := make([]string, 0)
@@ -684,7 +684,7 @@ func (s *Server) handleEnforceConfigPost(w http.ResponseWriter, r *http.Request)
 		changes = append(changes, "require_approval updated")
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	s.writeEnforcementJSON(w, http.StatusOK, map[string]interface{}{
 		"status":  "updated",
 		"changes": changes,
 	})

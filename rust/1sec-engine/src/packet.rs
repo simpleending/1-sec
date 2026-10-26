@@ -30,6 +30,7 @@ const SSH_MAX_CHANNEL_OPENS_PER_SEC: usize = 50;
 const SSH_TRACKER_WINDOW_SECS: u64 = 1;
 const WEBSOCKET_MAX_FRAME_PAYLOAD: u64 = 16 * 1024 * 1024;
 const WEBSOCKET_FLOW_TTL_SECS: u64 = 3600;
+const MAX_WEBSOCKET_FLOWS: usize = 4096;
 
 /// Per-source tracking for anomaly detection.
 struct SourceTracker {
@@ -199,6 +200,16 @@ impl WebSocketTracker {
 
         let key = Self::flow_key(src_ip, src_port, dst_ip, dst_port);
         if is_websocket_upgrade_request(payload) {
+            if !self.flows.contains_key(&key) && self.flows.len() >= MAX_WEBSOCKET_FLOWS {
+                if let Some(oldest) = self
+                    .flows
+                    .iter()
+                    .min_by_key(|(_, at)| **at)
+                    .map(|(key, _)| key.clone())
+                {
+                    self.flows.remove(&oldest);
+                }
+            }
             self.flows.insert(key, now);
             return Vec::new();
         }
@@ -372,8 +383,8 @@ pub async fn capture_loop(
             Some(NetSlice::Ipv6(ipv6)) => {
                 let h = ipv6.header();
                 (
-                    format!("{:?}", h.source()),
-                    format!("{:?}", h.destination()),
+                    std::net::Ipv6Addr::from(h.source()).to_string(),
+                    std::net::Ipv6Addr::from(h.destination()).to_string(),
                 )
             }
             _ => continue,
@@ -724,6 +735,16 @@ mod source_tracker_tests {
 #[cfg(test)]
 mod packet_util_tests {
     use super::*;
+
+    #[test]
+    fn websocket_flow_table_is_bounded_under_tuple_churn() {
+        let mut tracker = WebSocketTracker::new();
+        let upgrade = b"GET / HTTP/1.1\r\nUpgrade: websocket\r\nConnection: upgrade\r\n\r\n";
+        for port in 0..(MAX_WEBSOCKET_FLOWS + 20) {
+            tracker.track("192.0.2.1", port as u16, "198.51.100.1", 80, upgrade);
+        }
+        assert_eq!(tracker.flows.len(), MAX_WEBSOCKET_FLOWS);
+    }
 
     #[test]
     fn test_extract_text_preview_ascii() {

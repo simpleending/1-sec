@@ -105,7 +105,7 @@ func (em *EscalationManager) AddHandler(handler EscalationHandler) {
 
 // Track begins watching an alert for escalation.
 func (em *EscalationManager) Track(alert *Alert) {
-	if !em.cfg.Enabled {
+	if !em.cfg.Enabled || alert.Type == "escalation" {
 		return
 	}
 
@@ -221,6 +221,9 @@ func (em *EscalationManager) escalate(alertID string, ctx context.Context) {
 		ta.timer = time.AfterFunc(timerCfg.Timeout, func() {
 			em.escalate(alertID, ctx)
 		})
+	} else {
+		delete(em.tracked, alertID)
+		defer ta.cancel()
 	}
 
 	em.mu.Unlock()
@@ -247,7 +250,7 @@ func (em *EscalationManager) escalate(alertID string, ctx context.Context) {
 			Severity:    newSev,
 			Status:      AlertStatusOpen,
 			Title:       fmt.Sprintf("[ESCALATION #%d] %s", event.EscalationN, ta.alert.Title),
-			Description: fmt.Sprintf("Alert %s was not acknowledged within %s. Escalated from %s to %s.", alertID[:12], timerCfg.Timeout, oldSev.String(), newSev.String()),
+			Description: fmt.Sprintf("Alert %s was not acknowledged within %s. Escalated from %s to %s.", alertID, timerCfg.Timeout, oldSev.String(), newSev.String()),
 			Metadata:    ta.alert.Metadata,
 			Mitigations: ta.alert.Mitigations,
 		}

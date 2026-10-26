@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 /// Mirrors `core.SecurityEvent` from the Go codebase.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecurityEvent {
+    #[serde(default)]
+    pub source_ip: String,
     pub id: String,
     pub timestamp: DateTime<Utc>,
     pub module: String,
@@ -98,6 +100,8 @@ impl Severity {
 /// Result of pattern matching against an event — published back to NATS.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MatchResult {
+    #[serde(default)]
+    pub context: std::collections::HashMap<String, String>,
     pub event_id: String,
     pub timestamp: DateTime<Utc>,
     pub matches: Vec<PatternMatch>,

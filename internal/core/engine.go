@@ -109,6 +109,9 @@ func (e *Engine) Start() error {
 		return fmt.Errorf("starting event bus: %w", err)
 	}
 	e.Bus = bus
+	if e.RustSidecar != nil {
+		e.RustSidecar.token = bus.token
+	}
 
 	// Wire alert pipeline to publish alerts to the bus
 	e.Pipeline.AddHandler(func(alert *Alert) {
@@ -175,8 +178,7 @@ func (e *Engine) Start() error {
 
 	// Subscribe to all events and route to interested modules only.
 	// Dedup check happens here so duplicates never reach modules.
-	// Also mark events as seen by Go-side detection so the Rust match bridge
-	// can skip them if Rust also detects the same event (bidirectional dedup).
+	// Rust detections remain independent; routing a Go event is not a detection.
 	if err := e.Bus.SubscribeToAllEvents(func(event *SecurityEvent) {
 		if e.Dedup.IsDuplicate(event) {
 			e.Logger.Debug().
@@ -184,10 +186,6 @@ func (e *Engine) Start() error {
 				Str("event_type", event.Type).
 				Msg("duplicate event suppressed")
 			return
-		}
-		// Mark event as seen for Rust match bridge dedup
-		if e.RustMatchBridge != nil {
-			e.RustMatchBridge.MarkEventSeen(event.ID)
 		}
 		e.Registry.RouteEvent(event, e.Logger)
 	}); err != nil {

@@ -341,7 +341,7 @@ func TestServiceAccountMonitor_UnusualAction(t *testing.T) {
 	// Simulate baseline period by manipulating internal state
 	sm.mu.Lock()
 	profile := sm.accounts["svc-2"]
-	profile.CountWindow = time.Now().Add(-48 * time.Hour)
+	profile.BaselineStart = time.Now().Add(-48 * time.Hour)
 	profile.LastSeen = time.Now()
 	sm.mu.Unlock()
 
@@ -358,7 +358,7 @@ func TestServiceAccountMonitor_UnusualIP(t *testing.T) {
 	// Simulate baseline period
 	sm.mu.Lock()
 	profile := sm.accounts["svc-3"]
-	profile.CountWindow = time.Now().Add(-48 * time.Hour)
+	profile.BaselineStart = time.Now().Add(-48 * time.Hour)
 	profile.LastSeen = time.Now()
 	sm.mu.Unlock()
 
@@ -455,7 +455,7 @@ func TestMonitor_HandleEvent_ServiceAccountActivity(t *testing.T) {
 	// Simulate baseline period
 	m.svcAcctMon.mu.Lock()
 	profile := m.svcAcctMon.accounts["svc-test"]
-	profile.CountWindow = time.Now().Add(-48 * time.Hour)
+	profile.BaselineStart = time.Now().Add(-48 * time.Hour)
 	profile.LastSeen = time.Now()
 	m.svcAcctMon.mu.Unlock()
 

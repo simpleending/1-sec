@@ -2,8 +2,8 @@ apiVersion: v2
 name: 1sec
 description: 1SEC — All-in-One Modular Cybersecurity Defense Platform
 type: application
-version: 0.2.1
-appVersion: "0.4.16"
+version: 0.2.2
+appVersion: "0.4.27"
 home: https://1-sec.dev
 sources:
   - https://github.com/simpleending/1-sec

@@ -689,6 +689,18 @@ func getStringDetail(event *core.SecurityEvent, key string) string {
 	if val, ok := event.Details[key].(string); ok {
 		return val
 	}
+	switch values := event.Details[key].(type) {
+	case []string:
+		return strings.Join(values, "\n")
+	case []interface{}:
+		var lines []string
+		for _, value := range values {
+			if text, ok := value.(string); ok {
+				lines = append(lines, text)
+			}
+		}
+		return strings.Join(lines, "\n")
+	}
 	return ""
 }
 

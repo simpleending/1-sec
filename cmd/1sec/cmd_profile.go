@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/1sec-project/1sec/internal/core"
 	"os"
 	"path/filepath"
 	"strings"
@@ -166,8 +167,11 @@ func cmdProfileCreate(args []string) {
 	}
 
 	// Ensure directory exists
-	if err := os.MkdirAll(profileDir(), 0755); err != nil {
+	if err := os.MkdirAll(profileDir(), 0700); err != nil {
 		errorf("creating profiles directory: %v", err)
+	}
+	if err := core.RestrictPrivatePath(profileDir(), true); err != nil {
+		errorf("securing profiles directory: %v", err)
 	}
 
 	var content string
@@ -191,7 +195,7 @@ func cmdProfileCreate(args []string) {
 	header += "#\n"
 
 	// #nosec G703 -- pp is contained by profilePath's strict basename validation.
-	if err := os.WriteFile(pp, []byte(header+content), 0644); err != nil {
+	if err := core.WritePrivateConfig(pp, []byte(header+content)); err != nil {
 		errorf("writing profile: %v", err)
 	}
 

@@ -159,7 +159,7 @@ func cmdConfigSet(args []string) {
 		errorf("marshaling config: %v", err)
 	}
 
-	if err := os.WriteFile(*configPath, out, core.ConfigFileMode); err != nil {
+	if err := core.WritePrivateConfig(*configPath, out); err != nil {
 		errorf("writing config: %v", err)
 	}
 

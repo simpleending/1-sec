@@ -408,7 +408,7 @@ func (s *Server) handleShutdown(w http.ResponseWriter, r *http.Request) {
 	}()
 }
 
-// handleConfigReload hot-reloads the configuration from disk.
+// handleConfigReload reports that configuration activation requires restart.
 func (s *Server) handleConfigReload(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")

@@ -452,7 +452,7 @@ unless `server.allow_unauthenticated_read` is set.
 | POST | `/api/v1/events` | Ingest an external SecurityEvent |
 | POST | `/api/v1/access/check` | Trusted gateway management-access decision (write key; deny by default) |
 | POST | `/api/v1/shutdown` | Graceful shutdown |
-| POST | `/api/v1/config/reload` | Hot-reload configuration |
+| POST | `/api/v1/config/reload` | Configuration changes require restart |
 | DELETE | `/api/v1/alerts/clear` | Clear all alerts |
 | POST | `/api/v1/enforce/policies/{module}` | Enable/disable enforcement per module |
 | POST | `/api/v1/enforce/dry-run/{on\|off}` | Toggle global dry-run mode |

@@ -433,11 +433,12 @@ type ServiceAccountMonitor struct {
 }
 
 type svcAccountProfile struct {
-	KnownActions map[string]bool
-	KnownIPs     map[string]bool
-	ActionCount  int
-	CountWindow  time.Time
-	LastSeen     time.Time
+	BaselineStart time.Time
+	KnownActions  map[string]bool
+	KnownIPs      map[string]bool
+	ActionCount   int
+	CountWindow   time.Time
+	LastSeen      time.Time
 }
 
 type SvcAnomaly struct {
@@ -462,17 +463,19 @@ func (sm *ServiceAccountMonitor) RecordAndAnalyze(accountID, action, resource, i
 	profile, exists := sm.accounts[accountID]
 	if !exists {
 		sm.accounts[accountID] = &svcAccountProfile{
-			KnownActions: map[string]bool{action: true},
-			KnownIPs:     map[string]bool{ip: true},
-			ActionCount:  1,
-			CountWindow:  now,
-			LastSeen:     now,
+			BaselineStart: now,
+			KnownActions:  map[string]bool{action: true},
+			KnownIPs:      map[string]bool{ip: true},
+			ActionCount:   1,
+			CountWindow:   now,
+			LastSeen:      now,
 		}
 		return anomaly
 	}
 
 	// Check for unusual action (only after baseline period)
-	if profile.LastSeen.Sub(profile.CountWindow) > 24*time.Hour {
+	baselineComplete := now.Sub(profile.BaselineStart) > 24*time.Hour
+	if baselineComplete {
 		if !profile.KnownActions[action] {
 			anomaly.UnusualAction = true
 		}
@@ -496,9 +499,11 @@ func (sm *ServiceAccountMonitor) RecordAndAnalyze(accountID, action, resource, i
 		anomaly.HighVolume = true
 	}
 
-	profile.KnownActions[action] = true
-	if ip != "" {
-		profile.KnownIPs[ip] = true
+	if !baselineComplete {
+		profile.KnownActions[action] = true
+		if ip != "" {
+			profile.KnownIPs[ip] = true
+		}
 	}
 	profile.LastSeen = now
 

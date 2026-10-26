@@ -57,6 +57,13 @@ func cmdCollect(args []string) {
 		cfg.Bus.URL = *natsURL
 		cfg.Bus.Embedded = false
 	}
+	if cfg.Bus.Embedded && collectorType != "all" {
+		cfg.Bus.Token, err = core.ReadEmbeddedBusToken(cfg.Bus.DataDir)
+		if err != nil {
+			errorf("%v", err)
+		}
+		cfg.Bus.URL = fmt.Sprintf("nats://127.0.0.1:%d", cfg.Bus.Port)
+	}
 
 	// For single collector mode, connect to existing NATS (don't start embedded)
 	if collectorType != "all" {

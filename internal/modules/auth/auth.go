@@ -972,6 +972,12 @@ func (ps *PasswordSprayDetector) RecordFailure(ip, username string) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 	ps.attempts = append(ps.attempts, sprayAttempt{ip: ip, username: username, time: time.Now()})
+	const maxSprayAttempts = 10000
+	if len(ps.attempts) > maxSprayAttempts {
+		copy(ps.attempts, ps.attempts[len(ps.attempts)-maxSprayAttempts:])
+		clear(ps.attempts[maxSprayAttempts:])
+		ps.attempts = ps.attempts[:maxSprayAttempts]
+	}
 }
 
 func (ps *PasswordSprayDetector) Check() SprayResult {
@@ -997,9 +1003,14 @@ func (ps *PasswordSprayDetector) Check() SprayResult {
 
 	ips := make(map[string]bool)
 	users := make(map[string]bool)
+	ipUsers := make(map[string]map[string]bool)
 	for _, a := range recent {
 		ips[a.ip] = true
 		users[a.username] = true
+		if ipUsers[a.ip] == nil {
+			ipUsers[a.ip] = make(map[string]bool)
+		}
+		ipUsers[a.ip][a.username] = true
 	}
 
 	result.UniqueIPs = len(ips)
@@ -1017,16 +1028,10 @@ func (ps *PasswordSprayDetector) Check() SprayResult {
 	}
 
 	// Also detect single-IP spray: one IP, many users, 1 attempt each
-	for ip := range ips {
-		ipUsers := make(map[string]bool)
-		for _, a := range recent {
-			if a.ip == ip {
-				ipUsers[a.username] = true
-			}
-		}
-		if len(ipUsers) >= 20 {
+	for _, perIP := range ipUsers {
+		if len(perIP) >= 20 {
 			result.Detected = true
-			result.UniqueUsers = len(ipUsers)
+			result.UniqueUsers = len(perIP)
 		}
 	}
 

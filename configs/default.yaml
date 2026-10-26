@@ -33,6 +33,8 @@ server:
 
 bus:
   url: "nats://127.0.0.1:4222"
+  # Embedded clients authenticate using data_dir/connection.token (owner/SYSTEM only).
+  # For external NATS, set token here or ONESEC_NATS_TOKEN; protect the broker separately.
   embedded: true
   data_dir: "./data/nats"
   port: 4222
@@ -48,6 +50,8 @@ alerts:
 syslog:
   enabled: false
   protocol: "udp"    # "udp", "tcp", or "both"
+  max_connections: 128          # TCP admission limit
+  read_timeout_seconds: 30      # Complete a syslog line within this deadline
   host: "0.0.0.0"
   port: 1514
 

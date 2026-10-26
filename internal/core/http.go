@@ -6,12 +6,11 @@ import (
 	"time"
 )
 
-var httpClient = &http.Client{
-	Timeout: 10 * time.Second,
-}
+var httpClient = &http.Client{Timeout: 10 * time.Second}
+var alertWebhookClient = newWebhookHTTPClient()
 
 func httpPost(url, contentType string, body []byte) (*http.Response, error) {
-	return httpClient.Post(url, contentType, bytes.NewReader(body))
+	return alertWebhookClient.Post(url, contentType, bytes.NewReader(body))
 }
 
 func newAuthRequest(method, url string, body []byte, apiKey string) (*http.Request, error) {

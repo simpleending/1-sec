@@ -103,7 +103,7 @@ func setupConfigFile(reader *bufio.Reader, configPath string, nonInteractive boo
 		content = fullConfig()
 	}
 
-	if err := os.WriteFile(configPath, []byte(content), core.ConfigFileMode); err != nil {
+	if err := core.WritePrivateConfig(configPath, []byte(content)); err != nil {
 		fmt.Printf("     %s Could not write %s: %v\n\n", red("✗"), configPath, err)
 		return
 	}
@@ -288,7 +288,7 @@ func readLine(reader *bufio.Reader) string {
 
 func writeDefaultConfig(path string) {
 	content := fullConfig()
-	os.WriteFile(path, []byte(content), core.ConfigFileMode)
+	core.WritePrivateConfig(path, []byte(content))
 }
 
 func writeAIKeyToConfig(configPath, key string) error {
@@ -308,7 +308,7 @@ modules:
     settings:
       gemini_api_key: %q
 `, key)
-		return os.WriteFile(configPath, []byte(content), core.ConfigFileMode)
+		return core.WritePrivateConfig(configPath, []byte(content))
 	}
 
 	var raw map[string]interface{}
@@ -338,7 +338,7 @@ modules:
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(configPath, out, core.ConfigFileMode)
+	return core.WritePrivateConfig(configPath, out)
 }
 
 func appendAIKeyToConfig(configPath, key string) error {
@@ -395,7 +395,7 @@ func appendAIKeyToConfig(configPath, key string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(configPath, out, core.ConfigFileMode)
+	return core.WritePrivateConfig(configPath, out)
 }
 
 func writeAPIKeyToConfig(configPath, apiKey string) error {
@@ -420,5 +420,5 @@ func writeAPIKeyToConfig(configPath, apiKey string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(configPath, out, core.ConfigFileMode)
+	return core.WritePrivateConfig(configPath, out)
 }

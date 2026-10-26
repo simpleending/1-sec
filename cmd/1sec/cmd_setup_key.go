@@ -177,7 +177,7 @@ func writeAIKeysToConfig(configPath string, keys []string) error {
 			}
 		}
 		// #nosec G703 -- --config intentionally selects the operator-owned destination.
-		return os.WriteFile(configPath, []byte(content), core.ConfigFileMode)
+		return core.WritePrivateConfig(configPath, []byte(content))
 	}
 
 	var raw map[string]interface{}
@@ -221,7 +221,7 @@ func writeAIKeysToConfig(configPath string, keys []string) error {
 		return err
 	}
 	// #nosec G703 -- --config intentionally selects the operator-owned destination.
-	return os.WriteFile(configPath, out, core.ConfigFileMode)
+	return core.WritePrivateConfig(configPath, out)
 }
 
 func maskKey(key string) string {

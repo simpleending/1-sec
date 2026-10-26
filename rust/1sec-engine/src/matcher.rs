@@ -204,6 +204,7 @@ impl PatternMatcher {
         // Apply min_score threshold — discard low-confidence results
         if aggregate_score < self.min_score && !matches.is_empty() {
             return MatchResult {
+                context: std::collections::HashMap::new(),
                 event_id: event_id.to_string(),
                 timestamp: chrono::Utc::now(),
                 matches: Vec::new(),
@@ -214,6 +215,7 @@ impl PatternMatcher {
         }
 
         MatchResult {
+            context: std::collections::HashMap::new(),
             event_id: event_id.to_string(),
             timestamp: chrono::Utc::now(),
             matches,

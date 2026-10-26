@@ -266,7 +266,7 @@ func (tv *TokenVault) handleTokenExchange(event *core.SecurityEvent) {
 	subjectTokenType := getStringDetail(event, "subject_token_type")
 	requestedScopes := getStringDetail(event, "scopes")
 
-	tv.exchangeTracker.RecordRequest(connection, subjectTokenType)
+	tv.exchangeTracker.RecordRequest(connection, subjectTokenType, agentID)
 
 	// Detect rapid token exchanges from a single agent (possible token abuse)
 	if agentID != "" {
@@ -538,7 +538,6 @@ type exchangeRecord struct {
 type ExchangeTracker struct {
 	mu      sync.Mutex
 	records []exchangeRecord
-	byAgent map[string][]time.Time                // agent_id → exchange timestamps
 	scopes  map[string]map[string]map[string]bool // agent_id → connection → scopes seen
 	stats   ExchangeStats
 }
@@ -547,7 +546,6 @@ type ExchangeTracker struct {
 func NewExchangeTracker() *ExchangeTracker {
 	return &ExchangeTracker{
 		records: make([]exchangeRecord, 0, 1000),
-		byAgent: make(map[string][]time.Time),
 		scopes:  make(map[string]map[string]map[string]bool),
 		stats: ExchangeStats{
 			ByConnection: make(map[string]int64),
@@ -555,16 +553,21 @@ func NewExchangeTracker() *ExchangeTracker {
 	}
 }
 
-func (et *ExchangeTracker) RecordRequest(connection, subjectTokenType string) string {
+func (et *ExchangeTracker) RecordRequest(connection, subjectTokenType string, agentIDs ...string) string {
 	et.mu.Lock()
 	defer et.mu.Unlock()
 
 	id := fmt.Sprintf("exc_%d", time.Now().UnixNano())
+	agentID := ""
+	if len(agentIDs) > 0 {
+		agentID = agentIDs[0]
+	}
 	et.records = append(et.records, exchangeRecord{
 		ID:               id,
 		Connection:       connection,
 		SubjectTokenType: subjectTokenType,
 		Timestamp:        time.Now(),
+		AgentID:          agentID,
 	})
 	et.stats.TotalExchanges++
 	et.stats.ByConnection[connection]++
@@ -594,10 +597,9 @@ func (et *ExchangeTracker) RecentExchangeCount(agentID string, window time.Durat
 	defer et.mu.Unlock()
 
 	cutoff := time.Now().Add(-window)
-	timestamps := et.byAgent[agentID]
 	count := 0
-	for _, ts := range timestamps {
-		if ts.After(cutoff) {
+	for _, record := range et.records {
+		if record.AgentID == agentID && record.Timestamp.After(cutoff) {
 			count++
 		}
 	}

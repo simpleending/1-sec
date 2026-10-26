@@ -50,6 +50,7 @@ type DeadLetterEntry struct {
 
 // WebhookRetryConfig controls retry behavior.
 type WebhookRetryConfig struct {
+	client         *http.Client
 	MaxRetries     int           `yaml:"max_retries" json:"max_retries"`
 	InitialBackoff time.Duration `yaml:"initial_backoff" json:"initial_backoff"`
 	MaxBackoff     time.Duration `yaml:"max_backoff" json:"max_backoff"`
@@ -219,7 +220,10 @@ func (d *WebhookDispatcher) Stop() {
 
 func (d *WebhookDispatcher) worker(id int) {
 	defer d.wg.Done()
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := newWebhookHTTPClient()
+	if d.cfg.client != nil {
+		client = d.cfg.client
+	}
 
 	for {
 		select {

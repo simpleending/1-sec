@@ -118,14 +118,10 @@ func TestConnectedAccountTracker(t *testing.T) {
 func TestRecentExchangeCount(t *testing.T) {
 	et := NewExchangeTracker()
 
-	et.mu.Lock()
-	now := time.Now()
-	et.byAgent["agent-1"] = []time.Time{
-		now.Add(-1 * time.Minute),
-		now.Add(-2 * time.Minute),
-		now.Add(-10 * time.Minute), // outside 5-min window
-	}
-	et.mu.Unlock()
+	et.RecordRequest("github", SubjectTokenTypeAccessToken, "agent-1")
+	et.RecordRequest("github", SubjectTokenTypeAccessToken, "agent-1")
+	et.RecordRequest("github", SubjectTokenTypeAccessToken, "agent-2")
+	et.records = append(et.records, exchangeRecord{AgentID: "agent-1", Timestamp: time.Now().Add(-10 * time.Minute)})
 
 	count := et.RecentExchangeCount("agent-1", 5*time.Minute)
 	if count != 2 {

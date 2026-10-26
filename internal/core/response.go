@@ -329,6 +329,9 @@ func (re *ResponseEngine) handleAlert(alert *Alert) {
 	globalDryRun := re.cfg.Enforcement != nil && re.cfg.Enforcement.GetDryRun()
 
 	for _, rule := range policy.Actions {
+		if alert.Type == "escalation" && rule.Action != ActionWebhook && rule.Action != ActionLog {
+			continue
+		}
 		if alert.Severity < rule.MinSeverity {
 			continue
 		}

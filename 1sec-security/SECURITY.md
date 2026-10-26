@@ -71,7 +71,7 @@ verify checksum) over any script-based method for production systems.
    - Requires `GEMINI_API_KEY` environment variable
    - Only used for cross-module correlation (module 16)
    - Sends alert metadata to Gemini API for pattern analysis
-   - No raw log content sent to AI service
+   - Sends only allowlisted event category/type, severity, and minute-rounded time; raw logs, summaries, identifiers, and arbitrary details stay local. This reduces context available to AI.
    - All 15 rule-based modules work without any API key
 
 ### What We Don't Collect
@@ -82,24 +82,7 @@ verify checksum) over any script-based method for production systems.
 
 ## Self-Update Mechanism
 
-1-SEC includes a self-update feature that checks for new releases daily:
-
-```bash
-# Check for updates
-1sec selfupdate --check
-
-# Update to latest version
-1sec selfupdate
-
-# Disable auto-update checks
-1sec config set auto_update false
-```
-
-The self-update mechanism:
-- Downloads from GitHub releases (same source as manual install)
-- Verifies checksums before applying updates
-- Creates backup of current binary before updating
-- Can be disabled entirely via config
+1-SEC checks for a newer GitHub release at most once per day during normal CLI use. The check announces an installation link and never downloads or replaces executable code. Set `ONESEC_NO_UPDATE=1` to disable checks. Install upgrades with the maintained `install.sh`, which verifies the signed checksum bundle before extracting the archive. The old unsigned automatic replacement path and predictable temporary-file installer have been removed.
 
 ## Enforcement Actions & Permissions
 

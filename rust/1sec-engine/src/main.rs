@@ -84,7 +84,10 @@ async fn main() -> Result<()> {
 
     // Load config
     let cfg = config::EngineConfig::load(&cli.config)?;
-    let nats_url = cli.nats_url.unwrap_or(cfg.nats_url.clone());
+    let nats_url = std::env::var("ONESEC_NATS_URL")
+        .ok()
+        .or(cli.nats_url)
+        .unwrap_or(cfg.nats_url.clone());
     let engine_cfg = &cfg.rust_engine;
 
     // Compile pattern matcher with config-driven settings

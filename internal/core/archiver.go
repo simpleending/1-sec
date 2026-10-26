@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -69,8 +70,22 @@ type Archiver struct {
 
 // NewArchiver creates a cold archiver.
 func NewArchiver(cfg ArchiveConfig, bus *EventBus, logger zerolog.Logger) (*Archiver, error) {
-	if err := os.MkdirAll(cfg.Dir, 0755); err != nil {
+	if err := os.MkdirAll(cfg.Dir, 0700); err != nil {
 		return nil, fmt.Errorf("creating archive dir %s: %w", cfg.Dir, err)
+	}
+	if err := RestrictPrivatePath(cfg.Dir, true); err != nil {
+		return nil, fmt.Errorf("securing archive dir: %w", err)
+	}
+	entries, err := os.ReadDir(cfg.Dir)
+	if err != nil {
+		return nil, err
+	}
+	for _, entry := range entries {
+		if entry.Type().IsRegular() && strings.HasPrefix(entry.Name(), "1sec-archive-") && (strings.HasSuffix(entry.Name(), ".ndjson") || strings.HasSuffix(entry.Name(), ".ndjson.gz")) {
+			if err := RestrictPrivatePath(filepath.Join(cfg.Dir, entry.Name()), false); err != nil {
+				return nil, fmt.Errorf("securing existing archive: %w", err)
+			}
+		}
 	}
 
 	interval := time.Hour
@@ -220,8 +235,12 @@ func (a *Archiver) openFileLocked() error {
 	filename := fmt.Sprintf("1sec-archive-%s%s", ts, ext)
 	path := filepath.Join(a.cfg.Dir, filename)
 
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 	if err != nil {
+		return err
+	}
+	if err := RestrictPrivatePath(f.Name(), false); err != nil {
+		f.Close()
 		return err
 	}
 

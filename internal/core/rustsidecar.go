@@ -18,6 +18,7 @@ import (
 // It auto-starts the Rust binary as a subprocess, monitors its health,
 // and restarts it on crash with exponential backoff.
 type RustSidecar struct {
+	token  string
 	cfg    *RustEngineConfig
 	busCfg *BusConfig
 	logger zerolog.Logger
@@ -116,11 +117,14 @@ func (rs *RustSidecar) supervise(ctx context.Context, binary, configPath string)
 		args := rs.buildArgs(configPath)
 		rs.logger.Info().
 			Str("binary", binary).
-			Strs("args", args).
 			Int("restart", rs.restartCount).
 			Msg("starting rust engine")
 
 		cmd := exec.CommandContext(ctx, binary, args...)
+		cmd.Env = append(os.Environ(), "ONESEC_NATS_URL="+rs.natsURL())
+		if rs.token != "" {
+			cmd.Env = append(cmd.Env, "ONESEC_NATS_TOKEN="+rs.token)
+		}
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 
@@ -166,14 +170,8 @@ func (rs *RustSidecar) supervise(ctx context.Context, binary, configPath string)
 
 // buildArgs constructs the CLI arguments for the Rust engine binary.
 func (rs *RustSidecar) buildArgs(configPath string) []string {
-	natsURL := rs.busCfg.URL
-	if rs.busCfg.Embedded {
-		natsURL = fmt.Sprintf("nats://127.0.0.1:%d", rs.busCfg.Port)
-	}
-
 	args := []string{
 		"--config", configPath,
-		"--nats-url", natsURL,
 		"--log-format", "json",
 		"--log-level", "info",
 	}
@@ -183,6 +181,13 @@ func (rs *RustSidecar) buildArgs(configPath string) []string {
 	}
 
 	return args
+}
+
+func (rs *RustSidecar) natsURL() string {
+	if rs.busCfg.Embedded {
+		return fmt.Sprintf("nats://127.0.0.1:%d", rs.busCfg.Port)
+	}
+	return rs.busCfg.URL
 }
 
 // findBinary locates the Rust engine binary.

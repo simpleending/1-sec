@@ -39,6 +39,7 @@ type ThreatCorrelator struct {
 }
 
 type sourceAlertWindow struct {
+	fired     map[string]time.Time
 	alerts    []*Alert
 	modules   map[string]int // module -> count
 	firstSeen time.Time
@@ -180,6 +181,9 @@ func (tc *ThreatCorrelator) buildChainDefinitions() []attackChain {
 // Ingest processes a new alert and checks for cross-module correlations.
 // Called by the alert pipeline as a handler.
 func (tc *ThreatCorrelator) Ingest(alert *Alert) {
+	if alert.Module == "threat_correlator" || alert.Type == "escalation" {
+		return
+	}
 	// Extract source IP from alert metadata
 	sourceIP := ""
 	if ip, ok := alert.Metadata["source_ip"].(string); ok && ip != "" {
@@ -193,14 +197,57 @@ func (tc *ThreatCorrelator) Ingest(alert *Alert) {
 	defer tc.mu.Unlock()
 
 	now := time.Now()
+	if alert.Timestamp.IsZero() {
+		copy := *alert
+		copy.Timestamp = now
+		alert = &copy
+	}
 
 	window, exists := tc.sourceAlerts[sourceIP]
 	if !exists || now.Sub(window.lastSeen) > tc.windowDuration {
+		if !exists && len(tc.sourceAlerts) >= 1024 {
+			oldest := ""
+			var last time.Time
+			for ip, w := range tc.sourceAlerts {
+				if oldest == "" || w.lastSeen.Before(last) {
+					oldest, last = ip, w.lastSeen
+				}
+			}
+			delete(tc.sourceAlerts, oldest)
+		}
 		window = &sourceAlertWindow{
+			fired:     make(map[string]time.Time),
 			modules:   make(map[string]int),
 			firstSeen: now,
 		}
 		tc.sourceAlerts[sourceIP] = window
+	}
+	cutoff := now.Add(-tc.windowDuration)
+	kept := window.alerts[:0]
+	for _, a := range window.alerts {
+		if !a.Timestamp.Before(cutoff) {
+			kept = append(kept, a)
+		}
+	}
+	clear(window.alerts[len(kept):])
+	window.alerts = kept
+	// Keep recent evidence bounded even while an attack remains continuously active.
+	if len(window.alerts) >= 32 {
+		copy(window.alerts, window.alerts[len(window.alerts)-31:])
+		clear(window.alerts[31:])
+		window.alerts = window.alerts[:31]
+	}
+	window.modules = make(map[string]int)
+	for _, a := range window.alerts {
+		window.modules[a.Module]++
+	}
+	if window.fired == nil {
+		window.fired = make(map[string]time.Time)
+	}
+	for chain, at := range window.fired {
+		if at.Before(cutoff) {
+			delete(window.fired, chain)
+		}
 	}
 
 	window.alerts = append(window.alerts, alert)
@@ -336,6 +383,13 @@ func alertPrincipals(alert *Alert) map[string]bool {
 }
 
 func (tc *ThreatCorrelator) fireCorrelatedAlert(sourceIP string, window *sourceAlertWindow, chain attackChain) {
+	if window.fired == nil {
+		window.fired = make(map[string]time.Time)
+	}
+	if _, exists := window.fired[chain.Name]; exists {
+		return
+	}
+	window.fired[chain.Name] = time.Now()
 	// Deduplicate: don't fire the same chain for the same source twice
 	dedupeKey := fmt.Sprintf("correlated:%s:%s", sourceIP, chain.Name)
 	for _, a := range window.alerts {
