@@ -39,11 +39,13 @@ The [October 14 management-access update](docs/security-updates/2026-10-14.md) a
 
 ## Quick Start
 
+**No separate login is required.** Run the open-source engine locally, or use the API key issued after purchase to open the hosted dashboard. Connect your own applications through the REST API, collectors, or custom code. The hosted dashboard key and your self-hosted engine key have different purposes; see [Connect your systems](docs/connect-your-systems.md) for setup, curl/Python examples, and optional cloud reporting.
+
 ```bash
 # Install
 curl -fsSL https://1-sec.dev/get | sh
 # Production installs should pin a release:
-# curl -fsSL https://1-sec.dev/get | sh -s -- --version v1.2.3
+# curl -fsSL https://1-sec.dev/get | sh -s -- --version v0.4.29
 
 # Guided setup (config + AI keys + API auth)
 1sec setup
@@ -298,7 +300,7 @@ Override individual module policies in `configs/default.yaml` under `enforcement
 ```bash
 curl -fsSL https://1-sec.dev/get | sh
 # Or pin a production install:
-# curl -fsSL https://1-sec.dev/get | sh -s -- --version v1.2.3
+# curl -fsSL https://1-sec.dev/get | sh -s -- --version v0.4.29
 1sec up
 ```
 
@@ -421,6 +423,8 @@ Adding a module = adding one import. No registration boilerplate.
 
 ## REST API
 
+Authenticate your own scripts with an API key in the request header; there is no username/password or browser-login step. Follow the [connection guide](docs/connect-your-systems.md#send-events-from-your-application) to send canonical events from any language that supports HTTP.
+
 The engine exposes a REST API on port 1780. All endpoints except `/health`
 require an API key when `server.api_keys` or `server.read_only_keys` are
 configured. Without keys, read-only endpoints are served only on loopback binds
@@ -467,6 +471,8 @@ Secure the API by setting `ONESEC_API_KEY` or `server.api_keys` in config. Read-
 ---
 
 ## Cloud Dashboard & AI (Pro/Enterprise)
+
+After purchase, save the API key shown on the confirmation page and enter it at [the hosted dashboard](https://1-sec.dev/dashboard). No separate account login is needed. For machine reporting, create a dedicated instance credential with that key; [the connection guide](docs/connect-your-systems.md#optional-connect-an-engine-to-the-hosted-dashboard) explains enrollment and configuration. The open-source local engine does not require a subscription or a hosted key.
 
 The open-source engine is complete and fully functional standalone. Pro and Enterprise add:
 
