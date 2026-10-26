@@ -39,7 +39,7 @@ set -euo pipefail
 
 PRESET="safe"
 LIVE=false
-VERSION="0.4.28"
+VERSION="0.4.29"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do

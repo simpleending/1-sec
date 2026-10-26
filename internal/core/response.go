@@ -153,6 +153,10 @@ func NewResponseEngine(logger zerolog.Logger, bus *EventBus, pipeline *AlertPipe
 		re.ApprovalGate = NewApprovalGate(logger, cfg.Enforcement.ApprovalGate)
 		// When an action is approved, re-execute it
 		re.ApprovalGate.AddHandler(func(pa *PendingApproval) {
+			if !responseActionAllowed(pa.Alert, pa.Action) {
+				re.recordAction(pa.Alert, pa.Rule, pa.Target, ActionStatusSkipped, "alert does not authorize this action", 0, nil)
+				return
+			}
 			executor, exists := re.executors[pa.Action]
 			if !exists {
 				re.logger.Error().Str("action", string(pa.Action)).Msg("approved action has no executor")
@@ -329,7 +333,7 @@ func (re *ResponseEngine) handleAlert(alert *Alert) {
 	globalDryRun := re.cfg.Enforcement != nil && re.cfg.Enforcement.GetDryRun()
 
 	for _, rule := range policy.Actions {
-		if alert.Type == "escalation" && rule.Action != ActionWebhook && rule.Action != ActionLog {
+		if !responseActionAllowed(alert, rule.Action) {
 			continue
 		}
 		if alert.Severity < rule.MinSeverity {
@@ -417,6 +421,22 @@ func (re *ResponseEngine) handleAlert(alert *Alert) {
 			re.setCooldown(cooldownKey, policy.Cooldown)
 		}
 	}
+}
+
+// Operational status and aggregate observations do not establish executable targets.
+func responseActionAllowed(alert *Alert, action ActionType) bool {
+	if alert.Type == "escalation" || alert.Type == "tracking_capacity" {
+		return action == ActionWebhook || action == ActionLog
+	}
+	if alert.Module == "ransomware" {
+		if action == ActionQuarantineFile {
+			return false // Its file paths identify victims, not verified malicious artifacts.
+		}
+		if action == ActionKillProcess && (alert.Type == "data_exfiltration" || alert.Type == "compound_ransomware_prep") {
+			return false
+		}
+	}
+	return true
 }
 
 func (re *ResponseEngine) resolveTarget(alert *Alert, rule ResponseRule) string {

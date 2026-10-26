@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/1sec-project/1sec/internal/core"
+	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/rs/zerolog"
 )
 
@@ -230,7 +231,7 @@ func (i *Interceptor) handleFileCreated(event *core.SecurityEvent) {
 }
 
 func (i *Interceptor) handleEgress(event *core.SecurityEvent) {
-	bytesTransferred := getIntDetail(event, "bytes")
+	bytesTransferred := egressBytes(event.Details["bytes"])
 	destIP := event.DestIP
 	if destIP == "" {
 		destIP = getStringDetail(event, "destination")
@@ -240,15 +241,54 @@ func (i *Interceptor) handleEgress(event *core.SecurityEvent) {
 		return
 	}
 
-	exceeded := i.exfilTracker.Record(event.SourceIP, destIP, int64(bytesTransferred))
+	exceeded, stats := i.exfilTracker.record(event.SourceIP, destIP, bytesTransferred)
+	if stats.CapacityEvicted {
+		health := core.NewSecurityEvent(ModuleName, "tracking_capacity", core.SeverityLow, "Egress source history evicted; coverage reduced")
+		i.raiseAlert(health, core.SeverityLow, "Egress Tracking Capacity Reached", health.Summary, "tracking_capacity")
+	}
 	if exceeded {
-		stats := i.exfilTracker.GetStats(event.SourceIP)
 		i.raiseAlert(event, core.SeverityCritical,
 			"Data Exfiltration Detected [T1041]",
-			fmt.Sprintf("Abnormal data egress from %s: %.2f MB transferred to %d unique destinations in the last hour. Threshold: %.2f MB. MITRE ATT&CK T1041: Exfiltration Over C2 Channel.",
+			fmt.Sprintf("Abnormal data egress from %s: %.2f MB transferred to at least %d unique destinations in the last hour. Threshold: %.2f MB. MITRE ATT&CK T1041: Exfiltration Over C2 Channel.",
 				event.SourceIP, float64(stats.TotalBytes)/(1024*1024), stats.UniqueDestinations, float64(i.exfilTracker.threshold)/(1024*1024)),
 			"data_exfiltration")
 	}
+}
+
+// Saturate before converting JSON floats or wide counters to a signed byte count.
+func egressBytes(value interface{}) int64 {
+	switch v := value.(type) {
+	case int:
+		return max(int64(v), 0)
+	case int64:
+		return max(v, 0)
+	case uint64:
+		if v > math.MaxInt64 {
+			return math.MaxInt64
+		}
+		return int64(v)
+	case float64:
+		if math.IsNaN(v) || math.IsInf(v, 0) || v <= 0 {
+			return 0
+		}
+		if v >= float64(math.MaxInt64) {
+			return math.MaxInt64
+		}
+		return int64(v)
+	case string:
+		text := strings.TrimPrefix(strings.TrimSpace(v), "+")
+		for _, digit := range text {
+			if digit < '0' || digit > '9' {
+				return 0
+			}
+		}
+		n, _ := strconv.ParseUint(text, 10, 64) // Valid decimal overflow returns MaxUint64.
+		if n > math.MaxInt64 {
+			return math.MaxInt64
+		}
+		return int64(n)
+	}
+	return 0
 }
 
 func (i *Interceptor) handleCanaryTriggered(event *core.SecurityEvent) {
@@ -758,14 +798,17 @@ func (i *Interceptor) raiseAlert(event *core.SecurityEvent, severity core.Severi
 	if processHost != "" {
 		alert.Metadata["process_host"] = processHost
 	}
-	if name := getStringDetail(event, "process_name"); name != "" {
-		alert.Metadata["process_name"] = name
-	}
-	if pid := processID(event); pid != "" {
-		alert.Metadata["process_id"] = pid
+	if alertType != "data_exfiltration" && alertType != "compound_ransomware_prep" {
+		if name := getStringDetail(event, "process_name"); name != "" {
+			alert.Metadata["process_name"] = name
+		}
+		if pid := processID(event); pid != "" {
+			alert.Metadata["process_id"] = pid
+		}
 	}
 	if path := getStringDetail(event, "path"); path != "" {
-		alert.Metadata["file_path"] = path
+		// This may be victim data or a raw disk, not a malicious artifact.
+		alert.Metadata["affected_path"] = path
 	}
 	alert.Mitigations = getRansomwareMitigations(alertType)
 	if i.pipeline != nil {
@@ -1171,63 +1214,85 @@ func (ft *FileActivityTracker) CleanupLoop(ctx context.Context) {
 
 type ExfilTracker struct {
 	mu        sync.RWMutex
-	records   map[string]*exfilRecord // sourceIP -> record
+	records   *lru.Cache[string, *exfilRecord] // sourceIP -> record
 	threshold int64
 }
 
 type exfilRecord struct {
-	totalBytes   int64
-	destinations map[string]bool
-	firstSeen    time.Time
-	lastSeen     time.Time
+	totalBytes            int64
+	destinations          map[string]bool
+	destinationsTruncated bool
+	firstSeen             time.Time
+	lastSeen              time.Time
 }
 
 type ExfilStats struct {
-	TotalBytes         int64
-	UniqueDestinations int
+	TotalBytes            int64
+	UniqueDestinations    int
+	DestinationsTruncated bool
+	CapacityEvicted       bool
 }
 
 func NewExfilTracker(thresholdBytes int64) *ExfilTracker {
+	records, _ := lru.New[string, *exfilRecord](4096)
 	return &ExfilTracker{
-		records:   make(map[string]*exfilRecord),
+		records:   records,
 		threshold: thresholdBytes,
 	}
 }
 
 func (et *ExfilTracker) Record(sourceIP, destIP string, bytes int64) bool {
+	exceeded, _ := et.record(sourceIP, destIP, bytes)
+	return exceeded
+}
+
+func (et *ExfilTracker) record(sourceIP, destIP string, bytes int64) (bool, ExfilStats) {
 	et.mu.Lock()
 	defer et.mu.Unlock()
+	if sourceIP == "" || bytes <= 0 {
+		return false, ExfilStats{}
+	}
 
 	now := time.Now()
-	rec, exists := et.records[sourceIP]
+	rec, exists := et.records.Get(sourceIP)
+	evicted := false
 	if !exists || now.Sub(rec.firstSeen) > time.Hour {
 		rec = &exfilRecord{
 			destinations: make(map[string]bool),
 			firstSeen:    now,
 		}
-		et.records[sourceIP] = rec
+		evicted = et.records.Add(sourceIP, rec)
 	}
 
-	rec.totalBytes += bytes
+	if bytes > math.MaxInt64-rec.totalBytes {
+		rec.totalBytes = math.MaxInt64
+	} else {
+		rec.totalBytes += bytes
+	}
 	rec.lastSeen = now
 	if destIP != "" {
-		rec.destinations[destIP] = true
+		if len(rec.destinations) < 256 || rec.destinations[destIP] {
+			rec.destinations[destIP] = true
+		} else {
+			rec.destinationsTruncated = true
+		}
 	}
 
-	return rec.totalBytes > et.threshold
+	return rec.totalBytes > et.threshold, ExfilStats{TotalBytes: rec.totalBytes, UniqueDestinations: len(rec.destinations), DestinationsTruncated: rec.destinationsTruncated, CapacityEvicted: evicted}
 }
 
 func (et *ExfilTracker) GetStats(sourceIP string) ExfilStats {
 	et.mu.RLock()
 	defer et.mu.RUnlock()
 
-	rec, exists := et.records[sourceIP]
+	rec, exists := et.records.Peek(sourceIP)
 	if !exists {
 		return ExfilStats{}
 	}
 	return ExfilStats{
-		TotalBytes:         rec.totalBytes,
-		UniqueDestinations: len(rec.destinations),
+		TotalBytes:            rec.totalBytes,
+		UniqueDestinations:    len(rec.destinations),
+		DestinationsTruncated: rec.destinationsTruncated,
 	}
 }
 
@@ -1241,9 +1306,10 @@ func (et *ExfilTracker) CleanupLoop(ctx context.Context) {
 		case <-ticker.C:
 			et.mu.Lock()
 			cutoff := time.Now().Add(-2 * time.Hour)
-			for ip, rec := range et.records {
+			for _, ip := range et.records.Keys() {
+				rec, _ := et.records.Peek(ip)
 				if rec.lastSeen.Before(cutoff) {
-					delete(et.records, ip)
+					et.records.Remove(ip)
 				}
 			}
 			et.mu.Unlock()

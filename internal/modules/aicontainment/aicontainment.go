@@ -290,7 +290,7 @@ func (c *Containment) handleAgentAction(event *core.SecurityEvent) {
 	}
 
 	// Delegation verification for high-value actions: ensure the agent has a
-	// valid delegation record before allowing destructive or financial operations.
+	// valid delegation record to avoid an alert; a trusted runner must enforce admission.
 	// Catches "agent social engineering" where text claims substitute for real delegation.
 	if isHighValueAction(action, tool, target) {
 		valid, reason := c.delegationTracker.HasValidDelegation(agentID)
@@ -306,7 +306,7 @@ func (c *Containment) handleAgentAction(event *core.SecurityEvent) {
 	}
 
 	// Goal-action alignment check: if a tool_call is destructive but the
-	// agent's recent goal is read-only (Search/Read/Analyze), block and alert.
+	// agent's recent goal is read-only (Search/Read/Analyze), report a violation.
 	if event.Type == "tool_call" || event.Type == "function_call" {
 		if c.goalMonitor.IsDestructiveVsReadOnly(agentID, action, tool) {
 			c.raiseAlert(event, core.SeverityHigh,
@@ -1242,7 +1242,7 @@ func getContainmentMitigations(alertType string) []string {
 }
 
 // ============================================================================
-// PolicyEngine — enforces action policies for AI agents (ASI02)
+// PolicyEngine — checks observed actions against policies (ASI02); it is not an execution gate.
 // ============================================================================
 
 type PolicyEngine struct {

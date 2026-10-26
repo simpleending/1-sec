@@ -317,7 +317,6 @@ func balancedPreset() map[string]ResponsePolicyYAML {
 			Enabled: true, MinSeverity: "HIGH", CooldownSeconds: 60, MaxActionsPerMin: 10,
 			Actions: []ResponseRuleYAML{
 				{Action: "kill_process", MinSeverity: "HIGH", Description: "Kill process exhibiting ransomware behavior"},
-				{Action: "quarantine_file", MinSeverity: "HIGH", Description: "Quarantine files being encrypted"},
 				{Action: "block_ip", MinSeverity: "CRITICAL", Description: "Block data exfiltration destination", Params: map[string]string{"duration": "24h"}},
 			},
 		},
@@ -457,7 +456,6 @@ func strictPreset() map[string]ResponsePolicyYAML {
 			Enabled: true, MinSeverity: "MEDIUM", CooldownSeconds: 10, MaxActionsPerMin: 30,
 			Actions: []ResponseRuleYAML{
 				{Action: "kill_process", MinSeverity: "MEDIUM", Description: "Kill ransomware process immediately"},
-				{Action: "quarantine_file", MinSeverity: "MEDIUM", Description: "Quarantine encrypted/suspicious files"},
 				{Action: "block_ip", MinSeverity: "HIGH", Description: "Block exfiltration destination", Params: map[string]string{"duration": "48h"}},
 				{Action: "webhook", MinSeverity: "MEDIUM", Description: "Notify on ransomware activity", Params: map[string]string{"url": ""}},
 			},
@@ -685,7 +683,6 @@ func vpsAgentPreset() map[string]ResponsePolicyYAML {
 			Enabled: true, MinSeverity: "HIGH", CooldownSeconds: 30, MaxActionsPerMin: 20,
 			Actions: []ResponseRuleYAML{
 				{Action: "kill_process", MinSeverity: "HIGH", SkipApproval: true, Description: "Kill ransomware process"},
-				{Action: "quarantine_file", MinSeverity: "HIGH", SkipApproval: true, Description: "Quarantine files being encrypted"},
 				{Action: "webhook", MinSeverity: "HIGH", Description: "Notify on ransomware activity", Params: map[string]string{"url": ""}},
 			},
 		},

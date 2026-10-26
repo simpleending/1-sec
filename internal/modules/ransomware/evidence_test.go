@@ -130,7 +130,7 @@ func TestRansomwareProcessIsolationAndResponseEvidence(t *testing.T) {
 		t.Fatal("distinct high-entropy files did not trigger detection")
 	}
 	for _, alert := range cp.alerts {
-		if alert.Type == "mass_encryption" && (alert.Metadata["process_id"] != "40" || alert.Metadata["process_name"] != "writer" || alert.Metadata["file_path"] != "/data/4") {
+		if alert.Type == "mass_encryption" && (alert.Metadata["process_id"] != "40" || alert.Metadata["process_name"] != "writer" || alert.Metadata["affected_path"] != "/data/4" || alert.Metadata["file_path"] != nil) {
 			t.Fatalf("response target was lost: %+v", alert.Metadata)
 		}
 	}

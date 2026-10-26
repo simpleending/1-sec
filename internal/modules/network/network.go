@@ -106,8 +106,13 @@ func (g *Guardian) HandleEvent(event *core.SecurityEvent) error {
 	// Cross-module dynamic IP threat scoring: when ANY module fires an alert-worthy
 	// event with a source IP, accumulate threat points. IPs that trigger multiple
 	// modules get auto-blocked. This replaces the need for external TI feeds.
-	if event.SourceIP != "" && event.Module != ModuleName && event.Severity >= core.SeverityMedium {
-		newlyBlocked := g.ipReputation.RecordThreat(event.SourceIP, event.Module, event.Severity)
+	packetThreats, capacityWarnings := splitPacketAnomalies(event)
+	capacityOnly := len(capacityWarnings) > 0 && len(packetThreats) == 0
+	if event.SourceIP != "" && event.Module != ModuleName && event.Severity >= core.SeverityMedium && !capacityOnly {
+		newlyBlocked, evicted := g.ipReputation.recordThreat(event.SourceIP, event.Module, event.Severity)
+		if evicted {
+			g.reportCapacity(event, "IP reputation history evicted; dynamic scoring coverage reduced")
+		}
 		if newlyBlocked {
 			points, modules := g.ipReputation.GetThreatScore(event.SourceIP)
 			g.raiseAlert(event, core.SeverityCritical,
@@ -233,22 +238,14 @@ func (g *Guardian) handleDNSEvent(event *core.SecurityEvent) {
 
 // handleConnectionEvent detects C2 beaconing, covert channels, and suspicious connections.
 func (g *Guardian) handleConnectionEvent(event *core.SecurityEvent) {
-	if event.Source == "packet_capture" {
-		var anomalies []string
-		switch values := event.Details["packet_anomalies"].(type) {
-		case []string:
-			anomalies = values
-		case []interface{}:
-			for _, value := range values {
-				if text, ok := value.(string); ok {
-					anomalies = append(anomalies, text)
-				}
-			}
-		}
-		if len(anomalies) > 0 {
-			g.raiseAlert(event, core.SeverityMedium, "Captured Packet Anomaly", strings.Join(anomalies, "; "), "packet_anomaly")
-		}
+	threats, warnings := splitPacketAnomalies(event)
+	if len(warnings) > 0 {
+		g.reportCapacity(event, strings.Join(warnings, "; "))
 	}
+	if len(threats) > 0 {
+		g.raiseAlert(event, core.SeverityMedium, "Captured Packet Anomaly", strings.Join(threats, "; "), "packet_anomaly")
+	}
+
 	sourceIP := event.SourceIP
 	destIP := event.DestIP
 	destPort := getIntDetail(event, "dest_port")
@@ -384,11 +381,14 @@ func (g *Guardian) handlePortScanEvent(event *core.SecurityEvent) {
 	}
 
 	result := g.portScanDet.Record(sourceIP, destIP, destPort)
+	if result.CoverageReduced {
+		g.reportCapacity(event, "Port-scan history evicted or reset; prior scan coverage reduced")
+	}
 
 	if result.HorizontalScan {
 		g.raiseAlert(event, core.SeverityHigh,
 			"Horizontal Port Scan Detected",
-			fmt.Sprintf("IP %s is scanning port %d across %d hosts in %s. "+
+			fmt.Sprintf("IP %s is scanning port %d across at least %d hosts in %s. "+
 				"Network reconnaissance in progress. MITRE ATT&CK T1046.",
 				sourceIP, destPort, result.HostCount, result.TimeWindow),
 			"horizontal_scan")
@@ -397,7 +397,7 @@ func (g *Guardian) handlePortScanEvent(event *core.SecurityEvent) {
 	if result.VerticalScan {
 		g.raiseAlert(event, core.SeverityHigh,
 			"Vertical Port Scan Detected",
-			fmt.Sprintf("IP %s is scanning %d ports on host %s in %s. "+
+			fmt.Sprintf("IP %s is scanning at least %d ports on host %s in %s. "+
 				"Service enumeration in progress. MITRE ATT&CK T1046.",
 				sourceIP, result.PortCount, destIP, result.TimeWindow),
 			"vertical_scan")
@@ -407,7 +407,7 @@ func (g *Guardian) handlePortScanEvent(event *core.SecurityEvent) {
 		g.raiseAlert(event, core.SeverityCritical,
 			"Stealth Scan Detected",
 			fmt.Sprintf("IP %s is performing a stealth SYN scan against %s. "+
-				"Half-open connections detected across %d ports. "+
+				"Half-open connections detected across at least %d ports. "+
 				"This evades connection logging. MITRE ATT&CK T1046.",
 				sourceIP, destIP, result.PortCount),
 			"stealth_scan")
@@ -434,6 +434,38 @@ func (g *Guardian) handleAmplificationEvent(event *core.SecurityEvent) {
 			"Spoofed source IP used to reflect amplified traffic.",
 			protocol, reflectorIP, sourceIP, amplificationFactor, bytesReceived),
 		"amplification_attack")
+}
+
+// Capacity is sensor health, not evidence against the packet that triggered eviction.
+func (g *Guardian) reportCapacity(event *core.SecurityEvent, description string) {
+	health := *event
+	health.SourceIP, health.DestIP = "", ""
+	g.raiseAlert(&health, core.SeverityLow, "Tracking Capacity Reached", description, "tracking_capacity")
+}
+
+func splitPacketAnomalies(event *core.SecurityEvent) (threats, warnings []string) {
+	if event.Source != "packet_capture" {
+		return nil, nil
+	}
+	var entries []string
+	switch values := event.Details["packet_anomalies"].(type) {
+	case []string:
+		entries = values
+	case []interface{}:
+		for _, value := range values {
+			if text, ok := value.(string); ok {
+				entries = append(entries, text)
+			}
+		}
+	}
+	for _, text := range entries {
+		if strings.HasPrefix(text, "tracking_capacity:") {
+			warnings = append(warnings, text)
+		} else {
+			threats = append(threats, text)
+		}
+	}
+	return threats, warnings
 }
 
 func (g *Guardian) raiseAlert(event *core.SecurityEvent, severity core.Severity, title, description, alertType string) {
@@ -547,7 +579,8 @@ type IPReputation struct {
 	// Dynamic threat scoring — IPs accumulate threat points from cross-module
 	// alerts and auto-promote to malicious when they exceed the threshold.
 	// This replaces the need for external threat intelligence feeds.
-	scores          map[string]*ipThreatScore
+	// shortcut: evicted/expired dynamic scores lose history; capacity warnings require load investigation.
+	scores          *lru.Cache[string, *ipThreatScore]
 	autoBlockThresh int
 }
 
@@ -560,9 +593,10 @@ type ipThreatScore struct {
 }
 
 func NewIPReputation() *IPReputation {
+	scores, _ := lru.New[string, *ipThreatScore](4096)
 	rep := &IPReputation{
 		malicious:       make(map[string]bool),
-		scores:          make(map[string]*ipThreatScore),
+		scores:          scores,
 		autoBlockThresh: 50, // 50 points = auto-block
 	}
 	bogonCIDRs := []string{
@@ -583,6 +617,9 @@ func (r *IPReputation) IsMalicious(ip string) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	if r.malicious[ip] {
+		return true
+	}
+	if score, ok := r.scores.Peek(ip); ok && score.Blocked {
 		return true
 	}
 	parsed := net.ParseIP(ip)
@@ -609,8 +646,13 @@ func (r *IPReputation) AddMalicious(ips ...string) {
 // When an IP accumulates enough points across modules, it's auto-blocked.
 // Severity scoring: CRITICAL=20, HIGH=10, MEDIUM=5, LOW=2, INFO=1
 func (r *IPReputation) RecordThreat(ip, module string, severity core.Severity) bool {
+	blocked, _ := r.recordThreat(ip, module, severity)
+	return blocked
+}
+
+func (r *IPReputation) recordThreat(ip, module string, severity core.Severity) (bool, bool) {
 	if ip == "" {
-		return false
+		return false, false
 	}
 
 	points := 1
@@ -629,34 +671,36 @@ func (r *IPReputation) RecordThreat(ip, module string, severity core.Severity) b
 	defer r.mu.Unlock()
 
 	now := time.Now()
-	score, exists := r.scores[ip]
+	evicted := false
+	score, exists := r.scores.Get(ip)
 	if !exists {
 		score = &ipThreatScore{
 			Modules:   make(map[string]int),
 			FirstSeen: now,
 		}
-		r.scores[ip] = score
+		evicted = r.scores.Add(ip, score)
 	}
 
-	score.Points += points
-	score.Modules[module]++
+	score.Points = min(score.Points, math.MaxInt-points) + points
+	if score.Modules[module] > 0 || len(score.Modules) < 32 {
+		score.Modules[module] = min(score.Modules[module], math.MaxInt-1) + 1
+	}
 	score.LastSeen = now
 
 	// Auto-block if threshold exceeded and multiple modules flagged it
 	if !score.Blocked && score.Points >= r.autoBlockThresh && len(score.Modules) >= 2 {
 		score.Blocked = true
-		r.malicious[ip] = true
-		return true // newly blocked
+		return true, evicted // newly blocked
 	}
 
-	return false
+	return false, evicted
 }
 
 // GetThreatScore returns the current threat score for an IP.
 func (r *IPReputation) GetThreatScore(ip string) (int, int) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	score, exists := r.scores[ip]
+	score, exists := r.scores.Peek(ip)
 	if !exists {
 		return 0, 0
 	}
@@ -668,9 +712,10 @@ func (r *IPReputation) CleanupScores(maxAge time.Duration) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	cutoff := time.Now().Add(-maxAge)
-	for ip, score := range r.scores {
+	for _, ip := range r.scores.Keys() {
+		score, _ := r.scores.Peek(ip)
 		if score.LastSeen.Before(cutoff) {
-			delete(r.scores, ip)
+			r.scores.Remove(ip)
 		}
 	}
 }
@@ -689,8 +734,9 @@ type IPThreatInfo struct {
 func (r *IPReputation) AllThreats() []IPThreatInfo {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	result := make([]IPThreatInfo, 0, len(r.scores))
-	for ip, score := range r.scores {
+	result := make([]IPThreatInfo, 0, r.scores.Len())
+	for _, ip := range r.scores.Keys() {
+		score, _ := r.scores.Peek(ip)
 		modules := make(map[string]int)
 		for k, v := range score.Modules {
 			modules[k] = v
@@ -844,7 +890,8 @@ func (d *DNSTunnelDetector) Analyze(sourceIP, domain, queryType string, response
 	profile.domains[baseDomain]++
 	profile.totalQueries++
 	profile.lastSeen = now
-	if queryType != "" {
+	queryType = strings.ToUpper(strings.TrimSpace(queryType))
+	if queryType == "TXT" || queryType == "NULL" || queryType == "CNAME" {
 		profile.queryTypes[queryType]++
 	}
 	if subdomain != "" {
@@ -1223,16 +1270,17 @@ type scanProfile struct {
 }
 
 type PortScanResult struct {
-	HorizontalScan bool
-	VerticalScan   bool
-	StealthScan    bool
-	HostCount      int
-	PortCount      int
-	TimeWindow     string
+	CoverageReduced bool
+	HorizontalScan  bool
+	VerticalScan    bool
+	StealthScan     bool
+	HostCount       int
+	PortCount       int
+	TimeWindow      string
 }
 
 func NewPortScanDetector() *PortScanDetector {
-	sCache, _ := lru.New[string, *scanProfile](100000)
+	sCache, _ := lru.New[string, *scanProfile](4096)
 	return &PortScanDetector{scans: sCache}
 }
 
@@ -1250,15 +1298,17 @@ func (ps *PortScanDetector) Record(sourceIP, destIP string, destPort int) PortSc
 			destsByPort: make(map[int]map[string]bool),
 			windowStart: now,
 		}
-		ps.scans.Add(sourceIP, profile)
+		result.CoverageReduced = ps.scans.Add(sourceIP, profile)
 	}
 
 	// Bound inner maps
 	if len(profile.portsByDest) > 500 {
 		profile.portsByDest = make(map[string]map[int]bool)
+		result.CoverageReduced = true
 	}
 	if len(profile.destsByPort) > 500 {
 		profile.destsByPort = make(map[int]map[string]bool)
+		result.CoverageReduced = true
 	}
 	profile.lastSeen = now
 	profile.totalAttempts++
@@ -1268,7 +1318,9 @@ func (ps *PortScanDetector) Record(sourceIP, destIP string, destPort int) PortSc
 		if profile.portsByDest[destIP] == nil {
 			profile.portsByDest[destIP] = make(map[int]bool)
 		}
-		profile.portsByDest[destIP][destPort] = true
+		if len(profile.portsByDest[destIP]) < 20 {
+			profile.portsByDest[destIP][destPort] = true
+		}
 	}
 
 	// Track horizontal scan (one port across many hosts)
@@ -1277,7 +1329,9 @@ func (ps *PortScanDetector) Record(sourceIP, destIP string, destPort int) PortSc
 			profile.destsByPort[destPort] = make(map[string]bool)
 		}
 		if destIP != "" {
-			profile.destsByPort[destPort][destIP] = true
+			if len(profile.destsByPort[destPort]) < 10 {
+				profile.destsByPort[destPort][destIP] = true
+			}
 		}
 	}
 

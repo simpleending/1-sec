@@ -223,6 +223,9 @@ func (ce *ChainExecutor) Execute(ctx context.Context, chainName string, alert *A
 }
 
 func (ce *ChainExecutor) executeStep(ctx context.Context, step *ChainStep, alert *Alert, logger zerolog.Logger) StepExecutionRecord {
+	if !responseActionAllowed(alert, step.Action) {
+		return StepExecutionRecord{StepName: step.Name, Action: step.Action, Status: ActionStatusSkipped, Error: "alert does not authorize this action"}
+	}
 	executor, ok := ce.executors[step.Action]
 	if !ok {
 		return StepExecutionRecord{
