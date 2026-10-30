@@ -701,20 +701,26 @@ pub fn validate_magic(data: &[u8], extension: &str) -> Option<String> {
     None
 }
 
-/// Extract a text preview from a payload slice, returning empty string if binary.
+/// Extract bounded text, retaining valid UTF-8 and text around non-text bytes.
 fn extract_text_preview(payload: &[u8]) -> String {
     if payload.is_empty() {
         return String::new();
     }
     let len = payload.len().min(MAX_PAYLOAD_PREVIEW);
-    if payload[..len]
-        .iter()
-        .all(|&b| (0x20..0x7f).contains(&b) || b == b'\n' || b == b'\r' || b == b'\t')
-    {
-        String::from_utf8_lossy(&payload[..len]).to_string()
-    } else {
-        String::new()
+    let text = String::from_utf8_lossy(&payload[..len]);
+    let mut preview = String::with_capacity(len);
+    for ch in text.chars() {
+        let ch = if ch.is_control() && !matches!(ch, '\n' | '\r' | '\t') {
+            ' '
+        } else {
+            ch
+        };
+        if preview.len() + ch.len_utf8() > MAX_PAYLOAD_PREVIEW {
+            break;
+        }
+        preview.push(ch);
     }
+    preview
 }
 
 #[cfg(test)]
@@ -902,13 +908,22 @@ mod packet_util_tests {
     }
 
     #[test]
-    fn test_extract_text_preview_binary() {
-        let payload: Vec<u8> = (0u8..=255u8).collect();
-        let preview = extract_text_preview(&payload);
-        assert!(
-            preview.is_empty(),
-            "Expected empty preview for binary payload"
-        );
+    fn mixed_utf8_request_remains_inspectable() {
+        use crate::{matcher::PatternMatcher, patterns::all_patterns};
+        let payload = "POST / HTTP/1.1\r\nHost: example.test\r\n\r\nq=UNION SELECT password FROM users&label=café";
+        let preview = extract_text_preview(payload.as_bytes());
+        assert!(preview.contains("café"));
+        let matches = PatternMatcher::new(&all_patterns(), 0.0, true)
+            .scan("utf8-packet", &[("body", &preview)]);
+        assert!(matches.matches.iter().any(|m| m.category == "sqli"));
+    }
+
+    #[test]
+    fn test_extract_text_preview_binary_preserves_visible_text() {
+        let payload = b"\0\xffUNION SELECT password FROM users\0";
+        let preview = extract_text_preview(payload);
+        assert!(preview.contains("SELECT"));
+        assert!(preview.len() <= MAX_PAYLOAD_PREVIEW);
     }
 
     #[test]

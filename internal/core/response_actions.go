@@ -289,22 +289,7 @@ func (e *KillProcessExecutor) Execute(ctx context.Context, alert *Alert, rule Re
 		target = procName
 	}
 
-	var cmd *exec.Cmd
-	if pid != "" {
-		switch runtime.GOOS {
-		case "windows":
-			cmd = exec.CommandContext(ctx, "taskkill", "/F", "/PID", pid)
-		default:
-			cmd = exec.CommandContext(ctx, "kill", "-9", pid)
-		}
-	} else {
-		switch runtime.GOOS {
-		case "windows":
-			cmd = exec.CommandContext(ctx, "taskkill", "/F", "/IM", procName)
-		default:
-			cmd = exec.CommandContext(ctx, "pkill", "-9", procName)
-		}
-	}
+	cmd := killProcessCommand(ctx, runtime.GOOS, pid, procName)
 
 	output, err := cmd.CombinedOutput()
 	details := fmt.Sprintf("killed process %s", target)
@@ -312,6 +297,22 @@ func (e *KillProcessExecutor) Execute(ctx context.Context, alert *Alert, rule Re
 		return target, details, fmt.Errorf("kill command failed: %w — output: %s", err, string(output))
 	}
 	return target, details, nil
+}
+
+// Kept separate so platform argument selection can be tested without signaling processes.
+func killProcessCommand(ctx context.Context, goos, pid, name string) *exec.Cmd {
+	if pid != "" {
+		if goos == "windows" {
+			return exec.CommandContext(ctx, "taskkill", "/F", "/PID", pid)
+		}
+		return exec.CommandContext(ctx, "kill", "-9", pid)
+	}
+	if goos == "windows" {
+		return exec.CommandContext(ctx, "taskkill", "/F", "/IM", name)
+	}
+	// pkill accepts a regex, not a literal executable name. Exact matching also
+	// prevents a short name from selecting unrelated longer names.
+	return exec.CommandContext(ctx, "pkill", "-9", "-x", "--", regexp.QuoteMeta(name))
 }
 
 // A PID reported by a remote sensor must never target an unrelated local process.

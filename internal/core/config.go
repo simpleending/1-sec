@@ -258,16 +258,13 @@ func LoadConfig(path string) (*Config, error) {
 func LoadConfigWithOptions(path string, opts LoadConfigOptions) (*Config, error) {
 	cfg := DefaultConfig()
 
-	if path == "" {
-		return cfg, nil
-	}
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return cfg, nil
+	var data []byte
+	if path != "" {
+		var err error
+		data, err = os.ReadFile(path)
+		if err != nil && !os.IsNotExist(err) {
+			return nil, fmt.Errorf("reading config file: %w", err)
 		}
-		return nil, fmt.Errorf("reading config file: %w", err)
 	}
 	if strings.TrimSpace(string(data)) == "" {
 		data = nil

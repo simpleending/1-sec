@@ -29,7 +29,7 @@ pub struct RustEngineConfig {
     #[serde(default = "default_min_score")]
     pub min_score: f64,
 
-    /// Enable Aho-Corasick pre-filter for fast rejection
+    /// Compatibility name: enable complete RegexSet candidate selection.
     #[serde(default = "default_true")]
     pub aho_corasick_prefilter: bool,
 

@@ -132,12 +132,11 @@ func tailFile(ctx context.Context, path string, handler func(line string), logge
 	}
 
 	go func() {
-		defer f.Close()
+		defer func() { f.Close() }()
 		reader := bufio.NewReader(f)
-		var lastSize int64
-		if info, err := f.Stat(); err == nil {
-			lastSize = info.Size()
-		}
+		const maxLineBytes = 1024 * 1024
+		var pending []byte
+		discarding := false
 
 		for {
 			select {
@@ -146,27 +145,40 @@ func tailFile(ctx context.Context, path string, handler func(line string), logge
 			default:
 			}
 
-			line, err := reader.ReadString('\n')
+			fragment, err := reader.ReadSlice('\n')
+			if !discarding {
+				if len(pending)+len(fragment) > maxLineBytes {
+					logger.Warn().Str("path", path).Msg("oversized log record discarded")
+					pending = nil
+					discarding = true
+				} else {
+					pending = append(pending, fragment...)
+				}
+			}
+			if err == bufio.ErrBufferFull {
+				continue
+			}
 			if err != nil {
 				if err == io.EOF {
 					// Check for log rotation (file truncated or replaced)
 					if info, statErr := os.Stat(path); statErr == nil {
-						if info.Size() < lastSize {
+						opened, openedErr := f.Stat()
+						offset, seekErr := f.Seek(0, io.SeekCurrent)
+						if openedErr == nil && (!os.SameFile(opened, info) || (seekErr == nil && info.Size() < offset)) {
 							// File was truncated/rotated — reopen
 							logger.Info().Str("path", path).Msg("log rotation detected, reopening")
-							f.Close()
-							time.Sleep(100 * time.Millisecond)
 							newF, openErr := os.Open(path)
 							if openErr != nil {
 								logger.Error().Err(openErr).Str("path", path).Msg("failed to reopen after rotation")
-								return
+							} else {
+								f.Close()
+								f = newF
+								reader = bufio.NewReader(f)
+								pending = nil
+								discarding = false
+								continue
 							}
-							f = newF
-							reader = bufio.NewReader(f)
-							lastSize = 0
-							continue
 						}
-						lastSize = info.Size()
 					}
 					time.Sleep(250 * time.Millisecond)
 					continue
@@ -179,13 +191,11 @@ func tailFile(ctx context.Context, path string, handler func(line string), logge
 				continue
 			}
 
-			if info, statErr := f.Stat(); statErr == nil {
-				lastSize = info.Size()
+			if !discarding && len(pending) > 1 {
+				handler(string(pending[:len(pending)-1])) // strip trailing newline
 			}
-
-			if len(line) > 1 {
-				handler(line[:len(line)-1]) // strip trailing newline
-			}
+			pending = pending[:0]
+			discarding = false
 		}
 	}()
 

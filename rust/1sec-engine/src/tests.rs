@@ -954,19 +954,12 @@ mod comprehensive_tests {
     }
 
     #[test]
-    fn test_ac_prefiltered_count_vs_regex_only() {
+    fn test_prefilter_covers_all_patterns() {
         let m = matcher();
-        let ac_count = m.ac_prefiltered_count();
+        let count = m.prefiltered_count();
         let total = m.pattern_count();
-        // Most patterns should have AC pre-filter literals
-        assert!(
-            ac_count > 0,
-            "Expected at least some AC-prefiltered patterns"
-        );
-        assert!(
-            total > ac_count,
-            "Expected some regex-only patterns (like exfil_dns_tunnel)"
-        );
+        assert_eq!(count, total);
+        assert_eq!(matcher_no_ac().prefiltered_count(), 0);
     }
 
     // ────────────────────────────────────────────────────────────────────────

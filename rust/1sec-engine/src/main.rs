@@ -97,7 +97,7 @@ async fn main() -> Result<()> {
     );
     info!(
         pattern_count = matcher.pattern_count(),
-        ac_prefiltered = matcher.ac_prefiltered_count(),
+        prefiltered = matcher.prefiltered_count(),
         "pattern matcher compiled"
     );
 
