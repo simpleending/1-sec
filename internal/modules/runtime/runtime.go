@@ -364,10 +364,10 @@ func (w *Watcher) handleMemoryInjection(event *core.SecurityEvent) {
 
 	w.raiseAlert(event, core.SeverityCritical,
 		fmt.Sprintf("%s Detected", desc.title),
-		fmt.Sprintf("Process %s (PID: %s) injected into %s using %s technique. "+
+		fmt.Sprintf("Process %s injected into %s (target PID: %s) using %s technique. "+
 			"In-memory code execution evades file-based detection. "+
 			"MITRE ATT&CK %s.",
-			sourceProcess, targetPID, targetProcess, technique, desc.mitreID),
+			sourceProcess, targetProcess, targetPID, technique, desc.mitreID),
 		"memory_injection")
 }
 
@@ -679,6 +679,7 @@ func (w *Watcher) emitFileChange(change FileChange, source string) {
 		}
 		alert := core.NewAlert(event, finding.Title,
 			fmt.Sprintf("%s Path: %s. Change: %s.", finding.Description, change.Path, change.Type))
+		runtimeResponseEvidence(alert, event)
 		alert.Mitigations = getRuntimeMitigations(finding.AlertType)
 		if w.pipeline != nil {
 			w.pipeline.Process(alert)
@@ -704,6 +705,7 @@ func (w *Watcher) emitFileChange(change FileChange, source string) {
 		fmt.Sprintf("File Integrity Violation: %s", change.Type),
 		fmt.Sprintf("File %s was %s. Old hash: %s, New hash: %s",
 			change.Path, change.Type, truncate(change.OldHash, 16), truncate(change.NewHash, 16)))
+	runtimeResponseEvidence(alert, event)
 	alert.Mitigations = getRuntimeMitigations("file_integrity_violation")
 	if w.pipeline != nil {
 		w.pipeline.Process(alert)
@@ -718,6 +720,7 @@ func (w *Watcher) raiseAlert(event *core.SecurityEvent, severity core.Severity, 
 		_ = w.bus.PublishEvent(newEvent)
 	}
 	alert := core.NewAlert(newEvent, title, description)
+	runtimeResponseEvidence(alert, event)
 	alert.Mitigations = getRuntimeMitigations(alertType)
 	if w.pipeline != nil {
 		w.pipeline.Process(alert)

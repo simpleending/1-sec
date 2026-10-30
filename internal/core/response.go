@@ -333,10 +333,14 @@ func (re *ResponseEngine) handleAlert(alert *Alert) {
 	globalDryRun := re.cfg.Enforcement != nil && re.cfg.Enforcement.GetDryRun()
 
 	for _, rule := range policy.Actions {
-		if !responseActionAllowed(alert, rule.Action) {
+		if alert.Severity < rule.MinSeverity {
 			continue
 		}
-		if alert.Severity < rule.MinSeverity {
+		if !responseActionAllowed(alert, rule.Action) {
+			if alert.Module == "runtime_watcher" {
+				re.recordAction(alert, rule, re.resolveTarget(alert, rule), ActionStatusSkipped,
+					"runtime alert lacks eligible local process evidence or artifact authority", 0, nil)
+			}
 			continue
 		}
 
@@ -436,10 +440,24 @@ func responseActionAllowed(alert *Alert, action ActionType) bool {
 			return false
 		}
 	}
+	if alert.Module == "runtime_watcher" {
+		if action == ActionQuarantineFile {
+			return false
+		}
+		if action == ActionKillProcess {
+			return runtimeProcessResponseAllowed(alert)
+		}
+	}
 	return true
 }
 
 func (re *ResponseEngine) resolveTarget(alert *Alert, rule ResponseRule) string {
+	if alert.Module == "runtime_watcher" && rule.Action == ActionKillProcess {
+		if pid, _ := alert.Metadata["process_id"].(string); pid != "" {
+			return pid
+		}
+		return alert.ID
+	}
 	if ip, ok := alert.Metadata["source_ip"].(string); ok && ip != "" {
 		return ip
 	}

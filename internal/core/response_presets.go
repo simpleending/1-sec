@@ -376,8 +376,8 @@ func balancedPreset() map[string]ResponsePolicyYAML {
 		"runtime_watcher": {
 			Enabled: true, MinSeverity: "HIGH", CooldownSeconds: 60, MaxActionsPerMin: 20,
 			Actions: []ResponseRuleYAML{
-				{Action: "kill_process", MinSeverity: "HIGH", Description: "Kill suspicious runtime process"},
-				{Action: "quarantine_file", MinSeverity: "HIGH", Description: "Quarantine modified/injected files"},
+				{Action: "kill_process", MinSeverity: "HIGH", Description: "Kill runtime actor with explicit local PID evidence"},
+				{Action: "log_only", MinSeverity: "HIGH", Description: "Retain runtime and affected-file evidence"},
 			},
 		},
 		"cloud_posture": {
@@ -522,8 +522,8 @@ func strictPreset() map[string]ResponsePolicyYAML {
 		"runtime_watcher": {
 			Enabled: true, MinSeverity: "MEDIUM", CooldownSeconds: 30, MaxActionsPerMin: 40,
 			Actions: []ResponseRuleYAML{
-				{Action: "kill_process", MinSeverity: "MEDIUM", Description: "Kill suspicious runtime process"},
-				{Action: "quarantine_file", MinSeverity: "MEDIUM", Description: "Quarantine modified files"},
+				{Action: "kill_process", MinSeverity: "MEDIUM", Description: "Kill runtime actor with explicit local PID evidence"},
+				{Action: "log_only", MinSeverity: "MEDIUM", Description: "Retain affected files for investigation"},
 				{Action: "block_ip", MinSeverity: "HIGH", Description: "Block lateral movement source", Params: map[string]string{"duration": "4h"}},
 				{Action: "webhook", MinSeverity: "MEDIUM", Description: "Notify on runtime compromise", Params: map[string]string{"url": ""}},
 			},
@@ -611,8 +611,8 @@ func vpsAgentPreset() map[string]ResponsePolicyYAML {
 		"runtime_watcher": {
 			Enabled: true, MinSeverity: "MEDIUM", CooldownSeconds: 15, MaxActionsPerMin: 60,
 			Actions: []ResponseRuleYAML{
-				{Action: "kill_process", MinSeverity: "MEDIUM", SkipApproval: true, Description: "Kill process tampering with agent memory or config"},
-				{Action: "quarantine_file", MinSeverity: "MEDIUM", SkipApproval: true, Description: "Quarantine modified agent files (SOUL.md, MEMORY.md, .env)"},
+				{Action: "kill_process", MinSeverity: "MEDIUM", SkipApproval: true, Description: "Kill detected runtime actor with explicit local PID evidence"},
+				{Action: "log_only", MinSeverity: "MEDIUM", Description: "Preserve changed agent/config files for investigation"},
 				{Action: "block_ip", MinSeverity: "HIGH", Description: "Block source of file tampering attack", Params: map[string]string{"duration": "4h"}},
 				{Action: "webhook", MinSeverity: "MEDIUM", Description: "Notify on runtime file integrity violation", Params: map[string]string{"url": ""}},
 			},

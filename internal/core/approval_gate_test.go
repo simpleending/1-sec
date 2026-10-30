@@ -19,6 +19,31 @@ func makeAlertForApproval() *Alert {
 	}
 }
 
+func TestApprovalNotificationKeepsSubmittedSnapshot(t *testing.T) {
+	cfg := DefaultApprovalGateConfig()
+	cfg.Enabled = true
+	ag := NewApprovalGate(zerolog.Nop(), cfg)
+	defer ag.Stop()
+	release := make(chan struct{})
+	done := make(chan *PendingApproval, 1)
+	ag.SetNotifyFunc(func(pa *PendingApproval) { <-release; done <- pa })
+	ag.AddHandler(func(pa *PendingApproval) { pa.Target = "executed-target" })
+	id := ag.Submit(makeAlertForApproval(), ResponseRule{Action: ActionKillProcess}, "submitted-target")
+	if _, err := ag.Approve(id, "operator"); err != nil {
+		close(release)
+		t.Fatal(err)
+	}
+	close(release)
+	select {
+	case notification := <-done:
+		if notification.Target != "submitted-target" || notification.Status != "pending" {
+			t.Fatalf("notification observed a mutated approval: %+v", notification)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("notification not delivered")
+	}
+}
+
 func TestApprovalGate_RequiresApproval(t *testing.T) {
 	logger := zerolog.Nop()
 	cfg := DefaultApprovalGateConfig()

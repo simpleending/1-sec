@@ -198,11 +198,14 @@ func (ag *ApprovalGate) Submit(alert *Alert, rule ResponseRule, target string) s
 		Msg("⚠ action held for human approval")
 
 	notifyFn := ag.notifyFn
+	// Notification describes the submitted decision. Approval handlers may update
+	// the live record's result/target while this asynchronous callback is running.
+	notification := *pa
 	ag.mu.Unlock()
 
 	// Notify SOC team asynchronously that a decision is needed
 	if notifyFn != nil {
-		go notifyFn(pa)
+		go notifyFn(&notification)
 	}
 
 	return id

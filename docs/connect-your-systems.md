@@ -134,6 +134,14 @@ The hosted `/api/v1/ingest` endpoint accepts those reporting payloads. Raw appli
 
 ## Connect responses to your own application
 
+### Runtime process containment
+
+For process/start/execution and fileless telemetry, supply the observed actor's `process_id` or `pid`, together with its reporting host (`process_host`, `hostname`, `syslog_hostname` or `host_id`). Supplied PID aliases must agree; supplied host identities must match the local executor's hostname or interface addresses. A client `source_ip` does not identify the process's host. PIDs may be integer strings or exact integral JSON numbers. Name-only, missing, fractional, conflicting, remote and container-namespace evidence remains alertable but does not authorize local termination.
+
+For injection telemetry, `source_pid` identifies the actor; `target_pid` identifies the victim and is never used as a kill target. Run the executor in the same host/PID namespace as its trusted collector. Host labels are telemetry assertions, not authentication; protect collector and API credentials.
+
+Dry-run, severity, approvals, allowlists and response policy still control whether an eligible action runs. Review skipped-action records when an alert lacks executable evidence. Runtime file-integrity events retain `affected_path` for investigation; changed configuration or victim files are not automatically quarantined. See the [source-update contract and tests](security-updates/2026-10-30-runtime-containment.md). These source fixes are not in downloadable v0.4.29 binaries.
+
 Read alerts or configure supported webhooks/response policies to connect detection to your own workflow. For an existing management gateway, `POST /api/v1/access/check` can supply an explicit decision after the operator configures its policy. The gateway must enforce that decision before forwarding and deny on errors/timeouts; see the [access-check contract](security-updates/2026-10-14.md#gateway-integration).
 
 Customers can implement these adapters in their own code. Sending telemetry does not automatically place 1-SEC inside their request or tool-execution path, and the event-ingestion acknowledgment is not authorization to proceed. These integration choices do not require adding a login system to 1-SEC.

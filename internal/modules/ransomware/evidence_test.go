@@ -10,6 +10,22 @@ import (
 	"github.com/rs/zerolog"
 )
 
+func TestJSONProcessIDKeepsExactRansomwareAttribution(t *testing.T) {
+	for _, literal := range []string{"4242", "4242.0", "4.242e3", "4242.00000000000000001"} {
+		e, err := core.UnmarshalSecurityEvent([]byte(fmt.Sprintf(`{"type":"file_modified","details":{"process_id":%s}}`, literal)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := "4242"
+		if literal == "4242.00000000000000001" {
+			want = ""
+		}
+		if got := processID(e); got != want {
+			t.Fatalf("PID %s became %q, want %q", literal, got, want)
+		}
+	}
+}
+
 func TestFileActivityEvidence(t *testing.T) {
 	t.Run("one noisy file cannot contaminate many ordinary files", func(t *testing.T) {
 		ft := NewFileActivityTracker(5)

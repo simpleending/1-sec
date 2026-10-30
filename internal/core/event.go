@@ -2,6 +2,7 @@ package core
 
 import (
 	"encoding/json"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -76,6 +77,32 @@ type SecurityEvent struct {
 	DestIP    string                 `json:"dest_ip,omitempty"`
 	UserAgent string                 `json:"user_agent,omitempty"`
 	RequestID string                 `json:"request_id,omitempty"`
+}
+
+// UnmarshalJSON preserves process identifiers exactly across HTTP/broker decoding. Other
+// numeric telemetry keeps its existing float64 representation. Converting these
+// identifiers through float64 could round a fractional PID into a different target.
+func (e *SecurityEvent) UnmarshalJSON(data []byte) error {
+	type eventAlias SecurityEvent
+	decoded := eventAlias(*e)
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var raw struct {
+		Details map[string]json.RawMessage `json:"details"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	for _, key := range []string{"process_id", "pid", "source_pid"} {
+		if value, exists := raw.Details[key]; exists {
+			if _, numeric := decoded.Details[key].(float64); numeric {
+				decoded.Details[key] = json.Number(string(value))
+			}
+		}
+	}
+	*e = SecurityEvent(decoded)
+	return nil
 }
 
 // CanonicalizeEventRouting maps hostile routing tokens to deterministic NATS
@@ -158,7 +185,7 @@ type EventSchema struct {
 // Adapters and the /api/v1/event-schemas endpoint expose this so users can
 // validate their telemetry before sending it.
 func CanonicalEventSchemas() []EventSchema {
-	return []EventSchema{
+	schemas := []EventSchema{
 		// ── Auth & Identity ─────────────────────────────────────────────
 		{Type: "auth_failure", Category: "auth", RequiredKeys: []string{"username"}, OptionalKeys: []string{"method", "reason"}, Description: "Failed authentication attempt"},
 		{Type: "auth_success", Category: "auth", RequiredKeys: []string{"username"}, OptionalKeys: []string{"session_id", "method", "country_code"}, Description: "Successful authentication"},
@@ -345,6 +372,22 @@ func CanonicalEventSchemas() []EventSchema {
 		// ── Syslog (catch-all) ──────────────────────────────────────────
 		{Type: "syslog_event", Category: "syslog", RequiredKeys: []string{}, OptionalKeys: []string{"syslog_facility", "syslog_severity", "syslog_hostname", "syslog_app"}, Description: "Unclassified syslog event"},
 	}
+	for i := range schemas {
+		pidKeys := []string{"process_id", "pid"}
+		switch schemas[i].Type {
+		case "process_start", "process_exec", "fileless_execution", "powershell_exec", "wmi_exec", "mshta_exec":
+		case "memory_injection", "process_hollowing", "dll_injection":
+			pidKeys = []string{"source_pid"}
+		default:
+			continue
+		}
+		for _, key := range append(pidKeys, "process_host", "hostname", "syslog_hostname", "host_id", "container_id", "pid_namespace") {
+			if !slices.Contains(schemas[i].OptionalKeys, key) {
+				schemas[i].OptionalKeys = append(schemas[i].OptionalKeys, key)
+			}
+		}
+	}
+	return schemas
 }
 
 // EventSchemaMap returns schemas indexed by event type for fast lookup.

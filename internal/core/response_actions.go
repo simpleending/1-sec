@@ -260,6 +260,9 @@ type KillProcessExecutor struct{}
 func (e *KillProcessExecutor) Validate(rule ResponseRule) error { return nil }
 
 func (e *KillProcessExecutor) Execute(ctx context.Context, alert *Alert, rule ResponseRule, logger zerolog.Logger) (string, string, error) {
+	if alert.Module == "runtime_watcher" && !responseActionAllowed(alert, ActionKillProcess) {
+		return "", "", fmt.Errorf("runtime alert lacks eligible local process evidence")
+	}
 	if host, _ := alert.Metadata["process_host"].(string); host != "" {
 		if err := validateLocalProcessHost(host); err != nil {
 			return "", "", err
@@ -278,7 +281,7 @@ func (e *KillProcessExecutor) Execute(ctx context.Context, alert *Alert, rule Re
 			return "", "", fmt.Errorf("KillProcessExecutor: %w", err)
 		}
 	}
-	if procName != "" {
+	if pid == "" && procName != "" {
 		if err := validateProcessName(procName); err != nil {
 			return "", "", fmt.Errorf("KillProcessExecutor: %w", err)
 		}
@@ -348,6 +351,9 @@ type QuarantineFileExecutor struct{}
 func (e *QuarantineFileExecutor) Validate(rule ResponseRule) error { return nil }
 
 func (e *QuarantineFileExecutor) Execute(ctx context.Context, alert *Alert, rule ResponseRule, logger zerolog.Logger) (string, string, error) {
+	if alert.Module == "runtime_watcher" {
+		return "", "", fmt.Errorf("runtime observations do not establish a malicious artifact for quarantine")
+	}
 	if host, _ := alert.Metadata["process_host"].(string); host != "" {
 		if err := validateLocalProcessHost(host); err != nil {
 			return "", "", err

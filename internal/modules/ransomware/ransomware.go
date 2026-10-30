@@ -2,6 +2,7 @@ package ransomware
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"regexp"
@@ -1425,6 +1426,12 @@ func processID(event *core.SecurityEvent) string {
 		pid = int64(v)
 	case int64:
 		pid = v
+	case json.Number:
+		parsed, ok := core.ParseProcessIDNumber(v)
+		if !ok {
+			return ""
+		}
+		return parsed
 	case float64:
 		if math.IsNaN(v) || math.IsInf(v, 0) || v != math.Trunc(v) || v > math.MaxInt32 {
 			return ""

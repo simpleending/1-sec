@@ -25,7 +25,7 @@ The separate `web` lockfile has zero npm-audit findings. Several Go/Rust package
 
 ## Deferred and limited
 
-- Runtime alerts currently omit process/file targets required by kill/quarantine executors. Deferred: adding target authority requires source-host binding, process-specific evidence and safe artifact semantics. Modified victim paths must not become quarantine targets. Existing runtime tests pass; alert creation does not establish containment.
+- The initially deferred runtime target issue is addressed by the [runtime-containment follow-up](2026-10-30-runtime-containment.md): process-specific detections retain an exact actor PID and reporting-host context, and response paths enforce local evidence. File-only observations retain affected-path context and do not authorize quarantine. The follow-up remains outside downloadable v0.4.29 binaries.
 - Optional capture remains passive, packet-local and cannot decrypt TLS. Binary previews now cause more packets to be published; load impact is unmeasured. Capture filters, privileges and retention require deployment tuning. No production attack replay or throughput guarantee is claimed.
 - Tailing starts at EOF and loses oversized records. Fast copy-truncate/regrowth or multiple rotations between polls can still lose data. Windows prevents the POSIX rename test because the original file is open; that test is skipped locally.
 - Exact name matching can select several processes with the same name and inherits OS process-name limits. Prefer verified local PID identity. Linux/macOS signal behavior was not exercised.
