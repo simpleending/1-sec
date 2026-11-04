@@ -33,7 +33,7 @@
 
 Security intelligence reviews include verified code changes and regression checks. See the [October 13 implementation notes](docs/security-updates/2026-10-13.md) for SAML structure detection, agent identity checks, and exfiltration hardening.
 
-The [November 5 readiness review](docs/security-updates/2026-11-05-enterprise-readiness.md) records source fixes for attribution, evidence delivery, approvals and model-bundle configuration, plus the remaining enterprise identity, audit and capacity requirements. These source updates are not a new downloadable release or a certification claim.
+The [v0.4.30 release](https://github.com/simpleending/1-sec/releases/tag/v0.4.30) packages the October 30–November 5 fixes for runtime attribution, evidence delivery, approvals, sensor identity/revocation and authenticated HTTP integrations. Upgrade both binaries together. The [release notes](docs/security-updates/2026-11-05-v0.4.30.md) describe migration requirements and limits; this release makes no enterprise/government certification claim.
 
 The [sensor identity follow-up](docs/security-updates/2026-11-05-sensor-identity.md) adds individual ingest-only credentials, explicit host/event grants, durable rotation/revocation and checks on queued containment. Enrollment is opt-in; remote sensor observations do not authorize local OS actions. Existing broker and operator credentials remain privileged.
 

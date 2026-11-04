@@ -16,7 +16,7 @@ import (
 )
 
 var (
-	version   = "0.4.25"
+	version   = "0.4.30"
 	commit    = "dev"
 	buildDate = "unknown"
 )

@@ -81,6 +81,6 @@ release:
   github:
     owner: simpleending
     name: 1-sec
-  draft: false
+  draft: true
   prerelease: auto
   name_template: "v{{.Version}}"
