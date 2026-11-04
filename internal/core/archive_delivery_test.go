@@ -111,6 +111,18 @@ func TestBusRestartRetainsPendingDurableDelivery(t *testing.T) {
 	if err := bus.Subscribe("sec.events.>", "restart-test", func(msg *nats.Msg) { _ = msg.NakWithDelay(time.Second); received <- struct{}{} }); err != nil {
 		t.Fatal(err)
 	}
+	// A delayed NAK timer can be lost across server restart; the durable ACK
+	// deadline still guarantees recovery. Set an explicit short deadline so the
+	// test does not race the server's default 30-second AckWait with a 4s wait.
+	consumer, err := bus.js.ConsumerInfo("SECURITY_EVENTS", "restart-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := consumer.Config
+	config.AckWait = time.Second
+	if _, err := bus.js.UpdateConsumer("SECURITY_EVENTS", &config); err != nil {
+		t.Fatal(err)
+	}
 	if err := bus.PublishEvent(NewSecurityEvent("test", "test", SeverityInfo, "retry")); err != nil {
 		t.Fatal(err)
 	}

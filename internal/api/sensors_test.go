@@ -24,6 +24,7 @@ func sensorServer(t *testing.T) (*Server, *core.Engine) {
 	cfg.Bus.Port = -1
 	cfg.Alerts.EnableConsole = false
 	cfg.Logging.Level = "error"
+	cfg.Modules["runtime_watcher"] = core.ModuleConfig{Enabled: true, Settings: map[string]interface{}{"realtime_enabled": false}}
 	e, err := core.NewEngine(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -94,15 +95,20 @@ func TestSensorAPIEnrollmentIsolationRotationAndRevocation(t *testing.T) {
 		t.Fatalf("ingestion: %d %s", w.Code, w.Body)
 	}
 	deadline := time.Now().Add(3 * time.Second)
-	var alerts []*core.Alert
+	var found *core.Alert
 	for time.Now().Before(deadline) {
-		alerts = e.Pipeline.GetAlerts(core.SeverityInfo, 10)
-		if len(alerts) > 0 {
+		for _, alert := range e.Pipeline.GetAlerts(core.SeverityInfo, 100) {
+			if alert.Sensor != nil && alert.Sensor.SensorID == "a" && alert.Type == "lolbin_abuse" {
+				found = alert
+				break
+			}
+		}
+		if found != nil {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if len(alerts) == 0 || alerts[0].Sensor == nil || alerts[0].Sensor.SensorID != "a" {
+	if found == nil {
 		t.Fatal("real runtime detector lost authenticated identity")
 	}
 	for _, path := range []string{"/api/v1/sensors", "/api/v1/config", "/api/v1/logs", "/api/v1/alerts"} {
