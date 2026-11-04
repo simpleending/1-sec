@@ -2,6 +2,7 @@
 
 - Consult the current official documentation for frameworks, APIs, languages, and protocols before changing their behavior.
 - A vulnerability intelligence cycle includes implementation. After running the local `scripts/weekly_vuln_report.py`, verify the proposed findings against source, primary evidence, and reproducible tests; implement applicable fixes in the existing modules.
+- Weekly vulnerability work is led by the repository agent, without Gemini or another model API in the local script. Use the collect → agent review/implementation → verify → finalize workflow in `docs/weekly-vulnerability-cycle.md`. Collection is never a completed audit; preserve source failures, partial coverage and unreviewed candidates. Include dated primary research on new attack methods, not only CVE matches. Future weekly requests use this workflow.
 - Use the reporting period the user requests. Weekly normally means seven days; a requested month means a month. Do not silently expand the window.
 - Give every action item a tested disposition: implemented, already covered, deferred with a concrete reason, or rejected with evidence. Update the local report manifest and `reports/report-index.json` so the next cycle inherits the real status.
 - Add regression tests for security behavior and run the affected tests, engine build, vet, and vulnerability reachability scan. A feed count or model recommendation alone does not establish an exploitable product vulnerability.

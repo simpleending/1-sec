@@ -37,6 +37,8 @@ The [November 5 readiness review](docs/security-updates/2026-11-05-enterprise-re
 
 The [sensor identity follow-up](docs/security-updates/2026-11-05-sensor-identity.md) adds individual ingest-only credentials, explicit host/event grants, durable rotation/revocation and checks on queued containment. Enrollment is opt-in; remote sensor observations do not authorize local OS actions. Existing broker and operator credentials remain privileged.
 
+Weekly engineering now follows the [Codex-led vulnerability cycle](docs/weekly-vulnerability-cycle.md): primary evidence, source review, applicable fixes, real verification and carried-forward dispositions. The local script does not require Gemini or call a model API; collection alone is never reported as a completed audit.
+
 The [October 14 management-access update](docs/security-updates/2026-10-14.md) adds a deny-by-default decision API for trusted gateways and public management-exposure alerts. A gateway must enforce the decision before forwarding; installing 1-SEC alone does not put it in the equipment's request path.
 
 ---
