@@ -53,7 +53,7 @@ type analysisRequest struct {
 
 func New() *Engine {
 	return &Engine{
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		httpClient: core.NewAuthenticatedHTTPClient(30 * time.Second),
 		cb: gobreaker.NewCircuitBreaker(gobreaker.Settings{
 			Name:        "GeminiAPI",
 			MaxRequests: 3,

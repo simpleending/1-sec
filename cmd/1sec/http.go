@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/1sec-project/1sec/internal/core"
 )
 
 func apiGet(url, apiKey string, timeout time.Duration) ([]byte, error) {
@@ -22,7 +24,7 @@ func apiGet(url, apiKey string, timeout time.Duration) ([]byte, error) {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 
-	client := &http.Client{Timeout: timeout}
+	client := core.NewAuthenticatedHTTPClient(timeout)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to 1SEC API at %s: %w", url, err)
@@ -37,7 +39,7 @@ func apiGet(url, apiKey string, timeout time.Duration) ([]byte, error) {
 	if resp.StatusCode == 401 || resp.StatusCode == 403 {
 		return body, fmt.Errorf("authentication failed (HTTP %d) — provide --api-key or set ONESEC_API_KEY", resp.StatusCode)
 	}
-	if resp.StatusCode >= 400 {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return body, fmt.Errorf("API returned HTTP %d: %s", resp.StatusCode, string(body))
 	}
 	return body, nil
@@ -53,7 +55,7 @@ func apiPost(url string, payload []byte, apiKey string, timeout time.Duration) (
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 
-	client := &http.Client{Timeout: timeout}
+	client := core.NewAuthenticatedHTTPClient(timeout)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to 1SEC API at %s: %w", url, err)
@@ -68,7 +70,7 @@ func apiPost(url string, payload []byte, apiKey string, timeout time.Duration) (
 	if resp.StatusCode == 401 || resp.StatusCode == 403 {
 		return body, fmt.Errorf("authentication failed (HTTP %d) — provide --api-key or set ONESEC_API_KEY", resp.StatusCode)
 	}
-	if resp.StatusCode >= 400 {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return body, fmt.Errorf("API returned HTTP %d: %s", resp.StatusCode, string(body))
 	}
 	return body, nil
@@ -84,7 +86,7 @@ func apiPatch(url string, payload []byte, apiKey string, timeout time.Duration) 
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 
-	client := &http.Client{Timeout: timeout}
+	client := core.NewAuthenticatedHTTPClient(timeout)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to 1SEC API at %s: %w", url, err)
@@ -99,7 +101,7 @@ func apiPatch(url string, payload []byte, apiKey string, timeout time.Duration) 
 	if resp.StatusCode == 401 || resp.StatusCode == 403 {
 		return body, fmt.Errorf("authentication failed (HTTP %d) — provide --api-key or set ONESEC_API_KEY", resp.StatusCode)
 	}
-	if resp.StatusCode >= 400 {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return body, fmt.Errorf("API returned HTTP %d: %s", resp.StatusCode, string(body))
 	}
 	return body, nil
@@ -115,7 +117,7 @@ func apiDelete(url, apiKey string, timeout time.Duration) ([]byte, error) {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 
-	client := &http.Client{Timeout: timeout}
+	client := core.NewAuthenticatedHTTPClient(timeout)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to 1SEC API at %s: %w", url, err)
@@ -130,7 +132,7 @@ func apiDelete(url, apiKey string, timeout time.Duration) ([]byte, error) {
 	if resp.StatusCode == 401 || resp.StatusCode == 403 {
 		return body, fmt.Errorf("authentication failed (HTTP %d) — provide --api-key or set ONESEC_API_KEY", resp.StatusCode)
 	}
-	if resp.StatusCode >= 400 {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return body, fmt.Errorf("API returned HTTP %d: %s", resp.StatusCode, string(body))
 	}
 	return body, nil
@@ -156,7 +158,7 @@ func doGet(url, apiKey string) (*http.Response, error) {
 	if apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := core.NewAuthenticatedHTTPClient(15 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to 1SEC API at %s: %w", url, err)
@@ -178,7 +180,7 @@ func doPost(url, apiKey string, payload []byte) (*http.Response, error) {
 	if apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := core.NewAuthenticatedHTTPClient(15 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to 1SEC API at %s: %w", url, err)

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -27,12 +26,13 @@ import (
 //
 //	GITHUB_TOKEN — personal access token or fine-grained token with actions:read
 type GitHubCollector struct {
-	repo     string // "owner/repo"
-	tag      string
-	token    string
-	interval time.Duration
-	cancel   context.CancelFunc
-	lastSeen int64 // last workflow run ID we've processed
+	repo       string // "owner/repo"
+	tag        string
+	token      string
+	interval   time.Duration
+	cancel     context.CancelFunc
+	lastSeen   int64 // last workflow run ID we've processed
+	httpClient *http.Client
 }
 
 func NewGitHubCollector(repo, tag string) *GitHubCollector {
@@ -40,9 +40,10 @@ func NewGitHubCollector(repo, tag string) *GitHubCollector {
 		tag = "github"
 	}
 	return &GitHubCollector{
-		repo:     repo,
-		tag:      tag,
-		interval: 60 * time.Second, // poll every 60s
+		repo:       repo,
+		tag:        tag,
+		interval:   60 * time.Second, // poll every 60s
+		httpClient: core.NewAuthenticatedHTTPClient(15 * time.Second),
 	}
 }
 
@@ -112,22 +113,24 @@ func (c *GitHubCollector) fetchWorkflowRuns() ([]map[string]interface{}, error) 
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("GitHub API returned %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("GitHub API returned %d", resp.StatusCode)
+	}
+	body, err := core.ReadBoundedResponse(resp.Body, 4<<20)
+	if err != nil {
+		return nil, fmt.Errorf("reading GitHub response: %w", err)
 	}
 
 	var result struct {
 		WorkflowRuns []map[string]interface{} `json:"workflow_runs"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, err
 	}
 

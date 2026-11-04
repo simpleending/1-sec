@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -36,9 +35,10 @@ import (
 //	                     urn:ietf:params:oauth:token-type:access_token
 //	Requested type:      http://auth0.com/oauth/token-type/federated-connection-access-token
 type TokenVault struct {
-	logger   zerolog.Logger
-	pipeline *core.AlertPipeline
-	ctx      context.Context
+	logger     zerolog.Logger
+	pipeline   *core.AlertPipeline
+	ctx        context.Context
+	httpClient *http.Client
 
 	// Auth0 configuration
 	auth0Domain       string
@@ -57,6 +57,7 @@ func NewTokenVault(ctx context.Context, pipeline *core.AlertPipeline, cfg *core.
 		logger:          logger.With().Str("subsystem", "token_vault").Logger(),
 		pipeline:        pipeline,
 		ctx:             ctx,
+		httpClient:      core.NewAuthenticatedHTTPClient(15 * time.Second),
 		exchangeTracker: NewExchangeTracker(),
 		accountTracker:  NewConnectedAccountTracker(),
 	}
@@ -210,14 +211,14 @@ func (tv *TokenVault) ExchangeToken(subjectToken, subjectTokenType, connection s
 	// Track the exchange
 	exchangeID := tv.exchangeTracker.RecordRequest(connection, subjectTokenType)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := tv.httpClient.Do(req)
 	if err != nil {
 		tv.exchangeTracker.RecordFailure(exchangeID, err.Error())
 		return nil, fmt.Errorf("token exchange request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := core.ReadBoundedResponse(resp.Body, 64<<10)
 	if err != nil {
 		tv.exchangeTracker.RecordFailure(exchangeID, "failed to read response")
 		return nil, fmt.Errorf("reading token exchange response: %w", err)
@@ -246,6 +247,14 @@ func (tv *TokenVault) ExchangeToken(subjectToken, subjectTokenType, connection s
 		return &tokenResp, fmt.Errorf("token exchange error: %s — %s", tokenResp.Error, tokenResp.ErrorDesc)
 	}
 
+	if resp.StatusCode != http.StatusOK {
+		tv.exchangeTracker.RecordFailure(exchangeID, "unsuccessful HTTP status")
+		return nil, fmt.Errorf("token exchange returned HTTP %d", resp.StatusCode)
+	}
+	if !validOAuthField(tokenResp.AccessToken, true) || !validOAuthField(tokenResp.TokenType, false) || tokenResp.ExpiresIn < 0 {
+		tv.exchangeTracker.RecordFailure(exchangeID, "invalid required token fields or expiry")
+		return nil, fmt.Errorf("token exchange response has invalid access_token, token_type or expires_in")
+	}
 	tv.exchangeTracker.RecordSuccess(exchangeID, tokenResp.Scope)
 
 	tv.logger.Debug().
@@ -254,6 +263,20 @@ func (tv *TokenVault) ExchangeToken(subjectToken, subjectTokenType, connection s
 		Msg("token exchange successful")
 
 	return &tokenResp, nil
+}
+
+// OAuth token fields use visible ASCII (RFC 6749 appendix A). Expiry may be
+// absent or zero; an opaque access token must never be trimmed or rewritten.
+func validOAuthField(value string, allowSpace bool) bool {
+	if strings.TrimSpace(value) == "" {
+		return false
+	}
+	for _, c := range value {
+		if c < 0x20 || c > 0x7e || (!allowSpace && c == 0x20) {
+			return false
+		}
+	}
+	return true
 }
 
 // ---------------------------------------------------------------------------

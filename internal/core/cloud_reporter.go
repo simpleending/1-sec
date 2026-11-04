@@ -357,7 +357,7 @@ func (cr *CloudReporter) postIngest(payload interface{}) error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode >= 400 {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("cloud API returned %d", resp.StatusCode)
 	}
 

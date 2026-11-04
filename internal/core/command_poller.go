@@ -205,8 +205,12 @@ func (cp *CommandPoller) fetchPendingCommands() ([]CloudCommand, error) {
 			resp.Body.Close()
 			return nil, fmt.Errorf("cloud API returned %d", resp.StatusCode)
 		}
-		err = json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&page)
+		body, readErr := ReadBoundedResponse(resp.Body, 2<<20)
 		resp.Body.Close()
+		if readErr != nil {
+			return nil, fmt.Errorf("reading commands: %w", readErr)
+		}
+		err = json.Unmarshal(body, &page)
 		if err != nil {
 			return nil, fmt.Errorf("decoding response: %w", err)
 		}
@@ -256,7 +260,7 @@ func (cp *CommandPoller) ackCommand(cmdID, status, result, errMsg string, claimT
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode >= 400 {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return fmt.Errorf("ACK returned %d: %s", resp.StatusCode, string(respBody))
 	}
