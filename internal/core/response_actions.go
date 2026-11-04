@@ -129,6 +129,9 @@ func (e *BlockIPExecutor) Validate(rule ResponseRule) error {
 }
 
 func (e *BlockIPExecutor) Execute(ctx context.Context, alert *Alert, rule ResponseRule, logger zerolog.Logger) (string, string, error) {
+	if !sensorResponseAllowed(alert, ActionBlockIP) {
+		return "", "", fmt.Errorf("sensor does not authorize containment")
+	}
 	ip, _ := alert.Metadata["source_ip"].(string)
 	if ip == "" {
 		return "", "", fmt.Errorf("no source_ip in alert metadata")
@@ -260,6 +263,9 @@ type KillProcessExecutor struct{}
 func (e *KillProcessExecutor) Validate(rule ResponseRule) error { return nil }
 
 func (e *KillProcessExecutor) Execute(ctx context.Context, alert *Alert, rule ResponseRule, logger zerolog.Logger) (string, string, error) {
+	if !sensorResponseAllowed(alert, ActionKillProcess) {
+		return "", "", fmt.Errorf("sensor does not authorize containment")
+	}
 	if alert.Module == "runtime_watcher" && !responseActionAllowed(alert, ActionKillProcess) {
 		return "", "", fmt.Errorf("runtime alert lacks eligible local process evidence")
 	}
@@ -351,6 +357,9 @@ type QuarantineFileExecutor struct{}
 func (e *QuarantineFileExecutor) Validate(rule ResponseRule) error { return nil }
 
 func (e *QuarantineFileExecutor) Execute(ctx context.Context, alert *Alert, rule ResponseRule, logger zerolog.Logger) (string, string, error) {
+	if !sensorResponseAllowed(alert, ActionQuarantineFile) {
+		return "", "", fmt.Errorf("sensor does not authorize containment")
+	}
 	if alert.Module == "runtime_watcher" {
 		return "", "", fmt.Errorf("runtime observations do not establish a malicious artifact for quarantine")
 	}
@@ -408,6 +417,9 @@ type DropConnectionExecutor struct{}
 func (e *DropConnectionExecutor) Validate(rule ResponseRule) error { return nil }
 
 func (e *DropConnectionExecutor) Execute(ctx context.Context, alert *Alert, rule ResponseRule, logger zerolog.Logger) (string, string, error) {
+	if !sensorResponseAllowed(alert, ActionDropConnection) {
+		return "", "", fmt.Errorf("sensor does not authorize containment")
+	}
 	ip, _ := alert.Metadata["source_ip"].(string)
 	port, _ := alert.Metadata["dest_port"].(string)
 
@@ -459,6 +471,9 @@ type DisableUserExecutor struct{}
 func (e *DisableUserExecutor) Validate(rule ResponseRule) error { return nil }
 
 func (e *DisableUserExecutor) Execute(ctx context.Context, alert *Alert, rule ResponseRule, logger zerolog.Logger) (string, string, error) {
+	if !sensorResponseAllowed(alert, ActionDisableUser) {
+		return "", "", fmt.Errorf("sensor does not authorize containment")
+	}
 	username, _ := alert.Metadata["username"].(string)
 	if username == "" {
 		return "", "", fmt.Errorf("no username in alert metadata")
@@ -592,6 +607,9 @@ func (e *CommandExecutor) Validate(rule ResponseRule) error {
 }
 
 func (e *CommandExecutor) Execute(ctx context.Context, alert *Alert, rule ResponseRule, logger zerolog.Logger) (string, string, error) {
+	if !sensorResponseAllowed(alert, ActionCommand) {
+		return "", "", fmt.Errorf("sensor does not authorize containment")
+	}
 	cmdStr := rule.Params["command"]
 	if cmdStr == "" {
 		return "", "", fmt.Errorf("no command configured")

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -14,6 +16,7 @@ import (
 // Engine is the main 1SEC engine that orchestrates all components.
 type Engine struct {
 	Config          *Config
+	Sensors         *SensorRegistry
 	Bus             *EventBus
 	Registry        *ModuleRegistry
 	Pipeline        *AlertPipeline
@@ -37,6 +40,11 @@ type Engine struct {
 
 // NewEngine creates a new 1SEC engine.
 func NewEngine(cfg *Config) (*Engine, error) {
+	for _, key := range append(append([]string(nil), cfg.Server.APIKeys...), cfg.Server.ReadOnlyKeys...) {
+		if strings.HasPrefix(key, SensorTokenPrefix) {
+			return nil, fmt.Errorf("operator keys must not use the reserved sensor credential prefix")
+		}
+	}
 	logBuffer := NewLogRingBuffer(5000)
 
 	// Configure logger — tee output to both console/stdout and the ring buffer
@@ -74,6 +82,22 @@ func NewEngine(cfg *Config) (*Engine, error) {
 		cancel:      cancel,
 		logBuffer:   logBuffer,
 	}
+	if cfg.Sensors.RequireSensorIngest && !cfg.Sensors.Enabled {
+		cancel()
+		return nil, fmt.Errorf("require_sensor_ingest needs sensors.enabled")
+	}
+	if cfg.Sensors.Enabled {
+		dir := cfg.Sensors.StateDir
+		if dir == "" {
+			dir = filepath.Join(cfg.Bus.DataDir, "sensor-identity")
+		}
+		var err error
+		engine.Sensors, err = NewSensorRegistry(dir)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("loading sensor identity: %w", err)
+		}
+	}
 
 	// Add console alert handler if enabled
 	if cfg.Alerts.EnableConsole {
@@ -109,6 +133,7 @@ func (e *Engine) Start() error {
 		return fmt.Errorf("starting event bus: %w", err)
 	}
 	e.Bus = bus
+	bus.sensors = e.Sensors
 	if e.RustSidecar != nil {
 		e.RustSidecar.token = bus.token
 	}
@@ -286,6 +311,9 @@ func (e *Engine) Shutdown() error {
 	}
 
 	e.Logger.Info().Msg("1SEC engine stopped")
+	if e.Sensors != nil {
+		return e.Sensors.Close()
+	}
 	return nil
 }
 

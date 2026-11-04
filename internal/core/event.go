@@ -64,19 +64,22 @@ func (s *Severity) UnmarshalJSON(data []byte) error {
 
 // SecurityEvent is the standard event structure published to the event bus.
 type SecurityEvent struct {
-	ID        string                 `json:"id"`
-	Timestamp time.Time              `json:"timestamp"`
-	Source    string                 `json:"source"`
-	Module    string                 `json:"module"`
-	Type      string                 `json:"type"`
-	Severity  Severity               `json:"severity"`
-	Summary   string                 `json:"summary"`
-	Details   map[string]interface{} `json:"details,omitempty"`
-	RawData   []byte                 `json:"raw_data,omitempty"`
-	SourceIP  string                 `json:"source_ip,omitempty"`
-	DestIP    string                 `json:"dest_ip,omitempty"`
-	UserAgent string                 `json:"user_agent,omitempty"`
-	RequestID string                 `json:"request_id,omitempty"`
+	Sensor          *SensorEvidence `json:"sensor,omitempty"`
+	ObservationOnly bool            `json:"observation_only,omitempty"`
+	sensorAuthority *sensorAuthority
+	ID              string                 `json:"id"`
+	Timestamp       time.Time              `json:"timestamp"`
+	Source          string                 `json:"source"`
+	Module          string                 `json:"module"`
+	Type            string                 `json:"type"`
+	Severity        Severity               `json:"severity"`
+	Summary         string                 `json:"summary"`
+	Details         map[string]interface{} `json:"details,omitempty"`
+	RawData         []byte                 `json:"raw_data,omitempty"`
+	SourceIP        string                 `json:"source_ip,omitempty"`
+	DestIP          string                 `json:"dest_ip,omitempty"`
+	UserAgent       string                 `json:"user_agent,omitempty"`
+	RequestID       string                 `json:"request_id,omitempty"`
 }
 
 // UnmarshalJSON preserves process identifiers exactly across HTTP/broker decoding. Other
@@ -85,6 +88,7 @@ type SecurityEvent struct {
 func (e *SecurityEvent) UnmarshalJSON(data []byte) error {
 	type eventAlias SecurityEvent
 	decoded := eventAlias(*e)
+	decoded.sensorAuthority = nil
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		return err
 	}

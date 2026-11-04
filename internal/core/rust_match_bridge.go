@@ -20,6 +20,7 @@ import (
 
 // RustMatchResult is the Go representation of the Rust engine's MatchResult.
 type RustMatchResult struct {
+	SensorEvent      json.RawMessage    `json:"sensor_event,omitempty"`
 	Context          map[string]string  `json:"context,omitempty"`
 	EventID          string             `json:"event_id"`
 	Timestamp        time.Time          `json:"timestamp"`
@@ -101,6 +102,30 @@ func (b *RustMatchBridge) handleMatchResult(data []byte) {
 	if len(result.Matches) == 0 {
 		return
 	}
+	var sensorEvent *SecurityEvent
+	invalidSensor := false
+	if len(result.SensorEvent) > 0 || strings.HasPrefix(result.EventID, "sensor-") {
+		var err error
+		wire := result.SensorEvent
+		if len(wire) > 0 && wire[0] == '"' {
+			var exact string
+			if json.Unmarshal(wire, &exact) == nil {
+				wire = []byte(exact)
+			}
+		}
+		sensorEvent, err = UnmarshalSecurityEvent(wire)
+		if err != nil || sensorEvent.ID != result.EventID || b.bus == nil || b.bus.sensors == nil || !b.bus.sensors.VerifyEvent(sensorEvent) {
+			invalidSensor = true
+		} else {
+			// The signed event, not a result's free-form context, owns targets.
+			result.Context = map[string]string{"source_ip": sensorEvent.SourceIP}
+			for _, key := range []string{"user_id", "account_id", "session_id"} {
+				if value, ok := sensorEvent.Details[key].(string); ok {
+					result.Context[key] = value
+				}
+			}
+		}
+	}
 
 	// Dedup repeated sidecar results without suppressing independent Go analysis.
 	b.seenMu.Lock()
@@ -135,15 +160,16 @@ func (b *RustMatchBridge) handleMatchResult(data []byte) {
 	}
 
 	alert := &Alert{
-		ID:          uuid.New().String(),
-		Timestamp:   result.Timestamp,
-		Module:      inferModule(result.Matches),
-		Type:        "rust_pattern_match",
-		Severity:    severity,
-		Status:      AlertStatusOpen,
-		Title:       title,
-		Description: desc.String(),
-		EventIDs:    []string{result.EventID},
+		ObservationOnly: invalidSensor,
+		ID:              uuid.New().String(),
+		Timestamp:       result.Timestamp,
+		Module:          inferModule(result.Matches),
+		Type:            "rust_pattern_match",
+		Severity:        severity,
+		Status:          AlertStatusOpen,
+		Title:           title,
+		Description:     desc.String(),
+		EventIDs:        []string{result.EventID},
 		Metadata: map[string]interface{}{
 			"source":          "rust_sidecar",
 			"aggregate_score": result.AggregateScore,
@@ -152,6 +178,10 @@ func (b *RustMatchBridge) handleMatchResult(data []byte) {
 			"processing_us":   result.ProcessingTimeUs,
 			"pattern_matches": result.Matches,
 		},
+	}
+	if !invalidSensor && sensorEvent != nil {
+		alert.Sensor, alert.sensorAuthority = sensorEvent.Sensor, sensorEvent.sensorAuthority
+		alert.ObservationOnly = sensorEvent.ObservationOnly
 	}
 
 	if ip := net.ParseIP(result.Context["source_ip"]); ip != nil {

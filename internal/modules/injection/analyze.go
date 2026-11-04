@@ -93,7 +93,7 @@ func (s *Shield) analyzeEvent(event *core.SecurityEvent) {
 			catList = append(catList, categoryLabel(c))
 		}
 
-		newEvent := core.NewSecurityEvent(
+		newEvent := core.NewDerivedEvent(event,
 			ModuleName,
 			"injection_detected",
 			maxSeverity,
@@ -653,7 +653,7 @@ func (s *Shield) analyzeFileUpload(event *core.SecurityEvent) {
 		descriptions = append(descriptions, f.Description)
 	}
 
-	newEvent := core.NewSecurityEvent(
+	newEvent := core.NewDerivedEvent(event,
 		ModuleName,
 		"malicious_file_upload",
 		maxSeverity,

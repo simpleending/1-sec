@@ -525,7 +525,7 @@ func (f *Fortress) handleAuthDowngrade(event *core.SecurityEvent) {
 }
 
 func (f *Fortress) raiseAlert(event *core.SecurityEvent, severity core.Severity, title, description, alertType string) {
-	newEvent := core.NewSecurityEvent(ModuleName, alertType, severity, description)
+	newEvent := core.NewDerivedEvent(event, ModuleName, alertType, severity, description)
 	newEvent.SourceIP = event.SourceIP
 	newEvent.UserAgent = event.UserAgent
 	newEvent.Details["original_event_id"] = event.ID

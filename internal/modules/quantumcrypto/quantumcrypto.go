@@ -272,7 +272,7 @@ func (m *Monitor) handleInventoryScan(event *core.SecurityEvent) {
 
 // raiseAlert — fix #11: mitigations are now per-alert-type instead of hardcoded.
 func (m *Monitor) raiseAlert(event *core.SecurityEvent, severity core.Severity, title, description, alertType string, mitigations []string) {
-	newEvent := core.NewSecurityEvent(ModuleName, alertType, severity, description)
+	newEvent := core.NewDerivedEvent(event, ModuleName, alertType, severity, description)
 	newEvent.SourceIP = event.SourceIP
 	newEvent.Details["original_event_id"] = event.ID
 

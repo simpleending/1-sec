@@ -232,7 +232,7 @@ func (m *Monitor) handleVerification(event *core.SecurityEvent) {
 }
 
 func (m *Monitor) raiseAlert(event *core.SecurityEvent, severity core.Severity, title, description, alertType string) {
-	newEvent := core.NewSecurityEvent(ModuleName, alertType, severity, description)
+	newEvent := core.NewDerivedEvent(event, ModuleName, alertType, severity, description)
 	newEvent.SourceIP = event.SourceIP
 	newEvent.Details["original_event_id"] = event.ID
 	for _, key := range []string{

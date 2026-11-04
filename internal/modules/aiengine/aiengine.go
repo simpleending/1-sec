@@ -218,6 +218,7 @@ func (e *Engine) deepAnalysisWorker() {
 				}
 
 				newEvent := core.NewSecurityEvent(ModuleName, "ai_threat_classification", severity, result.Summary)
+				newEvent.ObservationOnly = true
 				newEvent.Details["threat_level"] = result.ThreatLevel
 				newEvent.Details["classification"] = result.Classification
 				newEvent.Details["correlated_events"] = len(req.events)
@@ -261,6 +262,7 @@ func (e *Engine) correlationLoop() {
 						newEvent := core.NewSecurityEvent(ModuleName, "correlation_detected", core.SeverityHigh,
 							fmt.Sprintf("Cross-module correlation: %s (%d events from %d modules)",
 								pattern.Description, pattern.EventCount, pattern.ModuleCount))
+						newEvent.ObservationOnly = true
 						newEvent.Details["pattern_type"] = pattern.Type
 						newEvent.Details["modules"] = pattern.Modules
 						newEvent.Details["event_count"] = pattern.EventCount

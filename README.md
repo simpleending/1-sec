@@ -35,6 +35,8 @@ Security intelligence reviews include verified code changes and regression check
 
 The [November 5 readiness review](docs/security-updates/2026-11-05-enterprise-readiness.md) records source fixes for attribution, evidence delivery, approvals and model-bundle configuration, plus the remaining enterprise identity, audit and capacity requirements. These source updates are not a new downloadable release or a certification claim.
 
+The [sensor identity follow-up](docs/security-updates/2026-11-05-sensor-identity.md) adds individual ingest-only credentials, explicit host/event grants, durable rotation/revocation and checks on queued containment. Enrollment is opt-in; remote sensor observations do not authorize local OS actions. Existing broker and operator credentials remain privileged.
+
 The [October 14 management-access update](docs/security-updates/2026-10-14.md) adds a deny-by-default decision API for trusted gateways and public management-exposure alerts. A gateway must enforce the decision before forwarding; installing 1-SEC alone does not put it in the equipment's request path.
 
 ---

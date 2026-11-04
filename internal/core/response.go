@@ -468,6 +468,12 @@ func (re *ResponseEngine) policyForAlert(alert *Alert) (*ResponsePolicy, bool) {
 
 // Operational status and aggregate observations do not establish executable targets.
 func responseActionAllowed(alert *Alert, action ActionType) bool {
+	if !sensorResponseAllowed(alert, action) {
+		return false
+	}
+	if alert.Type == "ai_threat_classification" || alert.Type == "correlation_detected" || alert.Module == "threat_correlator" {
+		return action == ActionLog || action == ActionWebhook
+	}
 	if alert.Type == "escalation" || alert.Type == "tracking_capacity" {
 		return action == ActionWebhook || action == ActionLog
 	}

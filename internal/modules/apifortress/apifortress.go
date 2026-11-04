@@ -531,7 +531,7 @@ func (f *Fortress) checkMCPServerProvisioning(event *core.SecurityEvent, path, m
 }
 
 func (f *Fortress) raiseAlert(event *core.SecurityEvent, severity core.Severity, title, description, alertType string) {
-	newEvent := core.NewSecurityEvent(ModuleName, alertType, severity, description)
+	newEvent := core.NewDerivedEvent(event, ModuleName, alertType, severity, description)
 	newEvent.SourceIP = event.SourceIP
 	newEvent.Details["original_event_id"] = event.ID
 

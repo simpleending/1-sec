@@ -1,5 +1,7 @@
 # November 5: defensive reliability and enterprise readiness
 
+Follow-up: [individual sensor identity and credential revocation](2026-11-05-sensor-identity.md) implements the HTTP producer portion of the identity priority below. Named operator permissions and constrained broker client identities remain separate requirements. This document preserves the baseline review.
+
 These are source changes after v0.4.29, not a new downloadable release or a certification claim. The review started at `33302ee`. The baseline fully reviewed 48 of 273 source/support paths, prioritizing ingestion, authorization, response, persistence and deployment. Architecture mapping and searches do not count as full file review. No production tenant, live attack, firewall rule or customer process was used for validation.
 
 1SEC can provide a useful detection and response layer when connected to trustworthy telemetry. This review does not establish that it can independently protect an enterprise, government network or every application. Fleet identity, durable collection, operating capacity and audit retention remain release and deployment work.

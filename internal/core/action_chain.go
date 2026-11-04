@@ -256,6 +256,9 @@ func (ce *ChainExecutor) executeStep(ctx context.Context, step *ChainStep, alert
 
 	var lastErr error
 	for attempt := 0; attempt <= retries; attempt++ {
+		if !responseActionAllowed(alert, step.Action) {
+			return StepExecutionRecord{StepName: step.Name, Action: step.Action, Status: ActionStatusSkipped, Error: "sensor or action authority is no longer valid"}
+		}
 		start := time.Now()
 		target, details, err := executor.Execute(stepCtx, alert, rule, logger)
 		durationMs := time.Since(start).Milliseconds()

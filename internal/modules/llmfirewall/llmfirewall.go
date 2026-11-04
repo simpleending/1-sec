@@ -250,7 +250,7 @@ func (f *Firewall) analyzeInput(event *core.SecurityEvent) {
 		catList = append(catList, c)
 	}
 
-	newEvent := core.NewSecurityEvent(ModuleName, "llm_threat_detected", maxSeverity,
+	newEvent := core.NewDerivedEvent(event, ModuleName, "llm_threat_detected", maxSeverity,
 		fmt.Sprintf("LLM threat detected: %s", strings.Join(catList, ", ")))
 	newEvent.SourceIP = event.SourceIP
 	newEvent.Details["original_event_id"] = event.ID
@@ -343,7 +343,7 @@ func (f *Firewall) analyzeOutput(event *core.SecurityEvent) {
 				if sub := markdownLinkRX.FindStringSubmatch(match); len(sub) > 1 {
 					url := sub[1]
 					if !isLocalMarkdownURL(url) {
-						newEvent := core.NewSecurityEvent(ModuleName, "asi_markdown_poisoning", core.SeverityCritical,
+						newEvent := core.NewDerivedEvent(event, ModuleName, "asi_markdown_poisoning", core.SeverityCritical,
 							fmt.Sprintf("Tainted session produced external markdown link after web fetch: %s", truncate(match, 200)))
 						newEvent.Details["original_event_id"] = event.ID
 						newEvent.Details["session_id"] = sessionID
@@ -372,7 +372,7 @@ func (f *Firewall) analyzeOutput(event *core.SecurityEvent) {
 
 	for _, rule := range f.outputRules {
 		if rule.Regex.MatchString(output) {
-			newEvent := core.NewSecurityEvent(ModuleName, "llm_output_violation", rule.Severity,
+			newEvent := core.NewDerivedEvent(event, ModuleName, "llm_output_violation", rule.Severity,
 				fmt.Sprintf("LLM output violation: %s", rule.Name))
 			newEvent.Details["original_event_id"] = event.ID
 			newEvent.Details["rule"] = rule.Name
@@ -438,7 +438,7 @@ func (f *Firewall) checkTokenBudget(event *core.SecurityEvent) {
 	budget.mu.Unlock()
 
 	if exceeded {
-		newEvent := core.NewSecurityEvent(ModuleName, "token_budget_exceeded", core.SeverityMedium,
+		newEvent := core.NewDerivedEvent(event, ModuleName, "token_budget_exceeded", core.SeverityMedium,
 			fmt.Sprintf("Token budget exceeded for user %s: %d/%d", userID, usage, limit))
 		newEvent.Details["user_id"] = userID
 		newEvent.Details["tokens_used"] = usage
@@ -1614,7 +1614,7 @@ func (f *Firewall) analyzeToolChain(event *core.SecurityEvent) {
 	result := f.toolChainMon.RecordAndAnalyze(agentID, tool, target)
 
 	if result.ChainDetected {
-		newEvent := core.NewSecurityEvent(ModuleName, "tool_chain_attack", result.Severity,
+		newEvent := core.NewDerivedEvent(event, ModuleName, "tool_chain_attack", result.Severity,
 			fmt.Sprintf("Dangerous tool chain detected: %s (tools: %s)", result.ChainName, strings.Join(result.Tools, " -> ")))
 		newEvent.SourceIP = event.SourceIP
 		newEvent.Details["original_event_id"] = event.ID
@@ -1759,7 +1759,7 @@ func (f *Firewall) analyzeExcessiveAgency(event *core.SecurityEvent) {
 	}
 
 	for _, a := range alerts {
-		newEvent := core.NewSecurityEvent(ModuleName, a.alertType, a.severity, a.desc)
+		newEvent := core.NewDerivedEvent(event, ModuleName, a.alertType, a.severity, a.desc)
 		newEvent.SourceIP = event.SourceIP
 		newEvent.Details["agent_id"] = agentID
 		newEvent.Details["action"] = action
@@ -1860,7 +1860,7 @@ func (f *Firewall) analyzeRAGRetrieval(event *core.SecurityEvent) {
 	}
 
 	for _, a := range alerts {
-		newEvent := core.NewSecurityEvent(ModuleName, a.alertType, a.severity, a.desc)
+		newEvent := core.NewDerivedEvent(event, ModuleName, a.alertType, a.severity, a.desc)
 		newEvent.SourceIP = event.SourceIP
 		newEvent.Details["source"] = source
 		newEvent.Details["similarity_score"] = similarity
@@ -1961,7 +1961,7 @@ func (f *Firewall) analyzeMisinformation(event *core.SecurityEvent) {
 	}
 
 	for _, a := range alerts {
-		newEvent := core.NewSecurityEvent(ModuleName, a.alertType, a.severity, a.desc)
+		newEvent := core.NewDerivedEvent(event, ModuleName, a.alertType, a.severity, a.desc)
 		newEvent.SourceIP = event.SourceIP
 		newEvent.Details["claim_type"] = claimType
 
@@ -2041,7 +2041,7 @@ func (f *Firewall) analyzeMultimodal(event *core.SecurityEvent) {
 	desc := fmt.Sprintf("Multimodal scan of %q found %d hidden injection(s) across layers: %s",
 		truncate(filename, 80), len(detections), strings.Join(layers, ", "))
 
-	newEvent := core.NewSecurityEvent(ModuleName, "multimodal_hidden_injection", maxSeverity, desc)
+	newEvent := core.NewDerivedEvent(event, ModuleName, "multimodal_hidden_injection", maxSeverity, desc)
 	newEvent.SourceIP = event.SourceIP
 	newEvent.Details["filename"] = filename
 	newEvent.Details["content_type"] = contentType

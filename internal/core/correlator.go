@@ -417,6 +417,7 @@ func (tc *ThreatCorrelator) fireCorrelatedAlert(sourceIP string, window *sourceA
 			chain.Name, len(window.alerts), len(modules),
 			strings.Join(modules, ", "), sourceIP, duration.Round(time.Second), chain.Description))
 	event.SourceIP = sourceIP
+	event.ObservationOnly = true // A statistical aggregate is not a single sensor grant.
 	event.Details["chain_name"] = chain.Name
 	event.Details["module_count"] = len(modules)
 	event.Details["alert_count"] = len(window.alerts)

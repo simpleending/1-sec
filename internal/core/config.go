@@ -27,6 +27,7 @@ type Config struct {
 	TokenVault       TokenVaultConfig        `yaml:"token_vault"`
 	Escalation       EscalationConfig        `yaml:"escalation"`
 	ManagementAccess ManagementAccessConfig  `yaml:"management_access"`
+	Sensors          SensorConfig            `yaml:"sensors"`
 }
 
 // TokenVaultConfig holds settings for Auth0 Token Vault integration.

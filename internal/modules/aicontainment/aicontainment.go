@@ -960,7 +960,7 @@ func (c *Containment) handleIdentityDelegation(event *core.SecurityEvent) {
 }
 
 func (c *Containment) raiseAlert(event *core.SecurityEvent, severity core.Severity, title, description, alertType string) {
-	newEvent := core.NewSecurityEvent(ModuleName, alertType, severity, description)
+	newEvent := core.NewDerivedEvent(event, ModuleName, alertType, severity, description)
 	newEvent.SourceIP = event.SourceIP
 	newEvent.Details["original_event_id"] = event.ID
 

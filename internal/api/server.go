@@ -68,6 +68,8 @@ func NewServer(engine *core.Engine) *Server {
 	// ── Mutating endpoints (require write scope) ────────────────────
 	mux.HandleFunc("/api/v1/alerts/clear", s.handleAlertsClear)
 	mux.HandleFunc("/api/v1/events", s.handleIngestEvent)
+	mux.HandleFunc("/api/v1/sensors", s.handleSensors)
+	mux.HandleFunc("/api/v1/sensors/", s.handleSensorAction)
 	mux.HandleFunc("/api/v1/access/check", s.handleManagementAccessCheck)
 	mux.HandleFunc("/api/v1/enforce/policies/", s.handleEnforcePolicyAction)
 	mux.HandleFunc("/api/v1/enforce/dry-run/", s.handleEnforceDryRun)
@@ -84,7 +86,7 @@ func NewServer(engine *core.Engine) *Server {
 	handler := corsMiddleware(
 		loggingMiddleware(
 			rateLimitMiddleware(
-				authMiddleware(mux, engine.Config, s.logger),
+				authMiddleware(mux, engine.Config, s.logger, engine.Sensors),
 				100, // 100 requests per second per IP
 			),
 			s.logger,
@@ -170,6 +172,13 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 	checks := make(map[string]interface{})
 	healthy := true
+	if s.engine.Config.Sensors.Enabled {
+		ready := s.engine.Sensors != nil && s.engine.Sensors.Ready()
+		checks["sensor_identity_ready"] = ready
+		if !ready {
+			healthy = false
+		}
+	}
 
 	// An unstarted/disconnected event bus cannot provide defensive coverage.
 	if s.engine.Bus != nil {
@@ -369,10 +378,24 @@ func (s *Server) handleIngestEvent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var event core.SecurityEvent
+	principal, sensorRequest := r.Context().Value(sensorContextKey{}).(core.SensorInfo)
+	if s.engine.Config.Sensors.RequireSensorIngest && !sensorRequest {
+		writeError(w, http.StatusForbidden, "sensor_required", "this engine requires individual sensor credentials for HTTP events")
+		return
+	}
+	maxBody := int64(1 << 20)
+	if sensorRequest {
+		maxBody = 64 << 10
+	}
 	// Limit body size to 1MB to prevent memory abuse
-	limited := io.LimitReader(r.Body, 1<<20)
-	if err := json.NewDecoder(limited).Decode(&event); err != nil {
+	r.Body = http.MaxBytesReader(w, r.Body, maxBody)
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(&event); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid event JSON: " + err.Error()})
+		return
+	}
+	if decoder.Decode(new(interface{})) != io.EOF {
+		writeError(w, http.StatusBadRequest, "invalid_event", "expected exactly one event")
 		return
 	}
 
@@ -389,6 +412,15 @@ func (s *Server) handleIngestEvent(w http.ResponseWriter, r *http.Request) {
 	// Reject events with no type — they can't be routed to any module
 	if event.Type == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "event 'type' is required"})
+		return
+	}
+	if sensorRequest {
+		if err := s.engine.Sensors.BindEvent(principal, &event); err != nil {
+			writeError(w, http.StatusForbidden, "sensor_scope", "event is outside the active sensor grant")
+			return
+		}
+	} else if event.Sensor != nil || strings.HasPrefix(event.Source, "sensor/") || strings.HasPrefix(event.ID, "sensor-") {
+		writeError(w, http.StatusForbidden, "sensor_required", "sensor provenance requires an individual sensor credential")
 		return
 	}
 
@@ -767,6 +799,9 @@ var mutatingPaths = map[string]bool{
 
 // isMutatingPath returns true if the request path requires write scope.
 func isMutatingPath(path, method string) bool {
+	if (path == "/api/v1/sensors" || strings.HasPrefix(path, "/api/v1/sensors/")) && method != http.MethodGet && method != http.MethodHead {
+		return true
+	}
 	// DELETE and PATCH on alerts are mutating
 	if strings.HasPrefix(path, "/api/v1/alerts/") && (method == http.MethodDelete || method == http.MethodPatch) {
 		return true
@@ -787,12 +822,30 @@ func isMutatingPath(path, method string) bool {
 // Keys are read from config (server.api_keys / server.read_only_keys) or env (ONESEC_API_KEY).
 // If no keys are configured, mutating endpoints are blocked (safe open mode).
 // Write-scope keys (api_keys) can access everything. Read-only keys are blocked from mutating endpoints.
-func authMiddleware(next http.Handler, cfg *core.Config, logger zerolog.Logger) http.Handler {
+func authMiddleware(next http.Handler, cfg *core.Config, logger zerolog.Logger, registries ...*core.SensorRegistry) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Always allow health checks without auth
 		asset, _ := dashboardAsset(r.URL.Path)
 		if r.URL.Path == "/health" || r.URL.Path == "/live" || asset != "" {
 			next.ServeHTTP(w, r)
+			return
+		}
+		key := requestAPIKey(r)
+		if strings.HasPrefix(key, core.SensorTokenPrefix) {
+			if !sensorTransportAllowed(r) {
+				writeError(w, http.StatusForbidden, "tls_required", "sensor credentials require TLS or a loopback proxy")
+				return
+			}
+			if r.Method != http.MethodPost || r.URL.Path != "/api/v1/events" || len(registries) == 0 || registries[0] == nil {
+				writeError(w, http.StatusForbidden, "sensor_scope", "sensor credentials only permit event submission")
+				return
+			}
+			info, ok := registries[0].Authenticate(key)
+			if !ok {
+				writeError(w, http.StatusForbidden, "invalid_sensor", "invalid or inactive sensor credential")
+				return
+			}
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), sensorContextKey{}, info)))
 			return
 		}
 
@@ -818,7 +871,7 @@ func authMiddleware(next http.Handler, cfg *core.Config, logger zerolog.Logger) 
 
 		// Extract key from Authorization header: "Bearer <key>"
 		authHeader := r.Header.Get("Authorization")
-		key := ""
+		key = ""
 		if authHeader == "" {
 			// Also check X-API-Key header as fallback
 			key = r.Header.Get("X-API-Key")

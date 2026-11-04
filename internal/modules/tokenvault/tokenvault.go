@@ -273,7 +273,7 @@ func (tv *TokenVault) handleTokenExchange(event *core.SecurityEvent) {
 		count := tv.exchangeTracker.RecentExchangeCount(agentID, 5*time.Minute)
 		threshold := 20
 		if count > threshold {
-			alert := newAlert(core.SeverityHigh,
+			alert := newEventAlert(event, core.SeverityHigh,
 				"Excessive token exchanges detected",
 				fmt.Sprintf("Agent %q performed %d token exchanges in 5 minutes (threshold: %d) for connection %q", agentID, count, threshold, connection),
 				map[string]interface{}{
@@ -291,7 +291,7 @@ func (tv *TokenVault) handleTokenExchange(event *core.SecurityEvent) {
 	// Detect scope escalation — agent requesting broader scopes than previously granted
 	if agentID != "" && requestedScopes != "" {
 		if escalation := tv.exchangeTracker.DetectScopeEscalation(agentID, connection, requestedScopes); escalation != "" {
-			alert := newAlert(core.SeverityHigh,
+			alert := newEventAlert(event, core.SeverityHigh,
 				"Token Vault scope escalation detected",
 				fmt.Sprintf("Agent %q requested new scopes for %q: %s", agentID, connection, escalation),
 				map[string]interface{}{
@@ -353,7 +353,7 @@ func (tv *TokenVault) handleAccountUsage(event *core.SecurityEvent) {
 
 	// Detect usage of connected accounts by unauthorized agents
 	if agentID != "" && !tv.accountTracker.IsAgentAuthorized(userID, connection, agentID) {
-		alert := newAlert(core.SeverityCritical,
+		alert := newEventAlert(event, core.SeverityCritical,
 			"Unauthorized agent accessing connected account",
 			fmt.Sprintf("Agent %q accessed connected account %q for user %q without prior authorization", agentID, connection, userID),
 			map[string]interface{}{
@@ -401,7 +401,7 @@ func (tv *TokenVault) handleAgentToolCall(event *core.SecurityEvent) {
 	// Check if the agent is using a token for a connection it wasn't delegated
 	userID := getStringDetail(event, "user_id")
 	if agentID == "" || userID == "" || !tv.accountTracker.IsAgentAuthorized(userID, connection, agentID) {
-		alert := newAlert(core.SeverityHigh,
+		alert := newEventAlert(event, core.SeverityHigh,
 			"Agent using undelegated Token Vault connection",
 			fmt.Sprintf("Agent %q invoked tool %q using connection %q without delegation from user %q", agentID, tool, connection, userID),
 			map[string]interface{}{
@@ -423,7 +423,7 @@ func (tv *TokenVault) handleOAuthEvent(event *core.SecurityEvent) {
 	if scopes != "" {
 		scopeList := strings.Split(scopes, " ")
 		if len(scopeList) > 10 {
-			alert := newAlert(core.SeverityMedium,
+			alert := newEventAlert(event, core.SeverityMedium,
 				"Broad OAuth scope grant detected",
 				fmt.Sprintf("OAuth grant for app %q by user %q includes %d scopes — review for consent phishing", appID, username, len(scopeList)),
 				map[string]interface{}{
@@ -809,4 +809,13 @@ func (cat *ConnectedAccountTracker) AgentCount() int {
 		}
 	}
 	return total
+}
+
+// newEventAlert retains the submitting sensor through the Token Vault adapter.
+func newEventAlert(event *core.SecurityEvent, severity core.Severity, title, description string, metadata map[string]interface{}) *core.Alert {
+	derived := core.NewDerivedEvent(event, alertModule, event.Type, severity, description)
+	alert := core.NewAlert(derived, title, description)
+	alert.EventIDs = []string{event.ID}
+	alert.Metadata = metadata
+	return alert
 }

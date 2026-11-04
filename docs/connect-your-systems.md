@@ -12,6 +12,7 @@ The local open-source engine runs without a purchase or cloud connection. After 
 | Dedicated hosted instance key | Report one engine's telemetry to your hosted account | `ONESEC_CLOUD_API_KEY` or `cloud.api_key`, paired with the enrolled `cloud.instance_id` |
 | Local engine write key | Submit events and use supported management/response endpoints on your engine | Configure `ONESEC_API_KEY` or `server.api_keys`; send it to your engine in an authorization header |
 | Local engine read-only key | Read status, schemas and alerts | Configure `server.read_only_keys`; it cannot submit events or change the engine |
+| Individual sensor credential | Submit only its enrolled host and exact event scopes | Enroll through `/api/v1/sensors`; send the returned credential only to `POST /api/v1/events` over HTTPS |
 | Embedded event-bus credential | Allow trusted collectors to publish locally | Default collectors discover the private instance credential; it is separate from HTTP API keys |
 
 `GEMINI_API_KEY` is an optional model-provider credential, not a dashboard or local-engine access key. Keep all keys in protected environment/configuration, never in public browser code, source control or query-string URLs. Use HTTPS for networked APIs and retain the engine's loopback bind unless deliberately configuring protected remote access.
@@ -36,6 +37,8 @@ curl --fail-with-body -sS \
 The local API also accepts an `X-API-Key` header. Hosted examples use `Authorization: Bearer`.
 
 ## Send events from your application
+
+For independently managed producers, enable [sensor identity and revocation](security-updates/2026-11-05-sensor-identity.md). Sensors receive ingest-only credentials instead of the full engine write key. Set `sensors.require_sensor_ingest: true` after migration to require them for HTTP events; the shared-key example below remains the compatibility mode. Broker credentials remain internal privileged credentials and must not be distributed to sensors.
 
 Any language with an HTTP client can send a canonical `SecurityEvent` to the local engine. Use an event type from `/api/v1/event-schemas` and supply its required detail fields; the `type` determines which detectors receive the event. No 1-SEC SDK or login session is needed.
 

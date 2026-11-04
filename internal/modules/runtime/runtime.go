@@ -713,7 +713,7 @@ func (w *Watcher) emitFileChange(change FileChange, source string) {
 }
 
 func (w *Watcher) raiseAlert(event *core.SecurityEvent, severity core.Severity, title, description, alertType string) {
-	newEvent := core.NewSecurityEvent(ModuleName, alertType, severity, description)
+	newEvent := core.NewDerivedEvent(event, ModuleName, alertType, severity, description)
 	newEvent.SourceIP = event.SourceIP
 	newEvent.Details["original_event_id"] = event.ID
 	if w.bus != nil {

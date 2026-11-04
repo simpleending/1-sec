@@ -469,7 +469,7 @@ func splitPacketAnomalies(event *core.SecurityEvent) (threats, warnings []string
 }
 
 func (g *Guardian) raiseAlert(event *core.SecurityEvent, severity core.Severity, title, description, alertType string) {
-	newEvent := core.NewSecurityEvent(ModuleName, alertType, severity, description)
+	newEvent := core.NewDerivedEvent(event, ModuleName, alertType, severity, description)
 	newEvent.SourceIP = event.SourceIP
 	newEvent.DestIP = event.DestIP
 	newEvent.Details["original_event_id"] = event.ID

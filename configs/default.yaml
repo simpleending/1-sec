@@ -31,6 +31,13 @@ server:
   # tls_cert: "/etc/1sec/tls/server.crt"
   # tls_key:  "/etc/1sec/tls/server.key"
 
+sensors:
+  enabled: false
+  # Set true after enrolling producers to reject shared-key HTTP event ingestion.
+  require_sensor_ingest: false
+  # Default: bus.data_dir/sensor-identity. Persist this private, engine-owned directory.
+  # state_dir: "/var/lib/1sec/sensor-identity"
+
 bus:
   url: "nats://127.0.0.1:4222"
   # Embedded clients authenticate using data_dir/connection.token (owner/SYSTEM only).

@@ -276,7 +276,17 @@ async fn process_message(
         result.highest_severity.as_str()
     );
 
-    let payload = serde_json::to_vec(&result).context("serializing match result")?;
+    let mut payload = serde_json::to_value(&result).context("serializing match result")?;
+    // Preserve the exact signed Go event, rather than reconstructing identity
+    // from Rust context strings. Go verifies its payload and live credential.
+    if event.id.starts_with("sensor-") {
+        payload["sensor_event"] = serde_json::Value::String(
+            std::str::from_utf8(&msg.payload)
+                .context("preserving sensor provenance")?
+                .to_owned(),
+        );
+    }
+    let payload = serde_json::to_vec(&payload).context("encoding match result")?;
     js.publish(subject, payload.into())
         .await
         .context("sending match result")?

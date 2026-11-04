@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -95,6 +96,50 @@ func TestRustResultPublicationFailureRetainsInput(t *testing.T) {
 	}
 	if result.EventID != e.ID || len(result.Matches) == 0 {
 		t.Fatalf("lost detection context: %+v", result)
+	}
+	// The real sidecar must preserve the complete signed sensor envelope.
+	registry := testSensors(t)
+	bus.sensors = registry
+	for index, pid := range []interface{}{"4242", json.Number("4.242e3"), json.Number("4242.00")} {
+		info, _ := enrollTestSensor(t, registry, fmt.Sprintf("sidecar-sensor-%d", index), true)
+		sensorEvent := signedTestEvent(t, registry, info)
+		sensorEvent.Details["process_id"] = pid
+		sensorEvent.Details["body"] = "UNION SELECT password FROM users"
+		if err := bus.PublishEvent(sensorEvent); err != nil {
+			t.Fatal(err)
+		}
+		var sensorWire []byte
+		waitFor("Rust dropped signed sensor provenance", func() bool {
+			state, err := bus.js.StreamInfo("SECURITY_MATCH_RESULTS")
+			if err != nil {
+				return false
+			}
+			for seq := state.State.FirstSeq; seq <= state.State.LastSeq; seq++ {
+				msg, err := bus.js.GetMsg("SECURITY_MATCH_RESULTS", seq)
+				if err != nil {
+					continue
+				}
+				var match RustMatchResult
+				if json.Unmarshal(msg.Data, &match) == nil && match.EventID == sensorEvent.ID {
+					sensorWire = msg.Data
+					return true
+				}
+			}
+			return false
+		})
+		pipeline := NewAlertPipeline(zerolog.Nop(), 10)
+		bridge := NewRustMatchBridge(zerolog.Nop(), pipeline, bus)
+		bridge.handleMatchResult(sensorWire)
+		alerts := pipeline.GetAlerts(SeverityInfo, 10)
+		if len(alerts) != 1 || alerts[0].Sensor == nil || !responseActionAllowed(alerts[0], ActionBlockIP) {
+			t.Fatal("real sidecar lost valid sensor authority")
+		}
+		if err := registry.Revoke(info.ID); err != nil {
+			t.Fatal(err)
+		}
+		if responseActionAllowed(alerts[0], ActionBlockIP) {
+			t.Fatal("sidecar alert retained revoked authority")
+		}
 	}
 	// Harmless and structurally invalid events have deliberate terminal outcomes.
 	for _, wire := range [][]byte{

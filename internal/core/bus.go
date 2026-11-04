@@ -18,13 +18,14 @@ import (
 
 // EventBus wraps NATS JetStream for event publishing and subscribing.
 type EventBus struct {
-	nc     *nats.Conn
-	js     nats.JetStreamContext
-	ns     *server.Server
-	logger zerolog.Logger
-	mu     sync.RWMutex
-	subs   []*nats.Subscription
-	token  string
+	nc      *nats.Conn
+	js      nats.JetStreamContext
+	ns      *server.Server
+	logger  zerolog.Logger
+	mu      sync.RWMutex
+	subs    []*nats.Subscription
+	token   string
+	sensors *SensorRegistry
 
 	// Metrics
 	metrics *BusMetrics
@@ -222,6 +223,24 @@ func writeBusToken(dataDir, token string) error {
 // PublishEvent publishes a SecurityEvent to the event bus.
 func (b *EventBus) PublishEvent(event *SecurityEvent) error {
 	CanonicalizeEventRouting(event)
+	if event.Sensor != nil {
+		a := event.sensorAuthority
+		if a == nil || b.sensors == nil || a.registry != b.sensors {
+			return fmt.Errorf("unverified sensor provenance")
+		}
+		r := a.registry
+		r.mu.RLock()
+		record, ok := r.records[a.id]
+		if !ok || !r.activeLocked(record, a.credential) {
+			r.mu.RUnlock()
+			return fmt.Errorf("inactive sensor provenance")
+		}
+		err := r.signLocked(event)
+		r.mu.RUnlock()
+		if err != nil {
+			return err
+		}
+	}
 
 	data, err := event.Marshal()
 	if err != nil {
@@ -319,6 +338,13 @@ func (b *EventBus) SubscribeToAllEvents(handler func(event *SecurityEvent)) erro
 			b.metrics.MessagesNaked++
 			b.metrics.mu.Unlock()
 			return
+		}
+		if event.Sensor != nil || strings.HasPrefix(event.ID, "sensor-") || strings.HasPrefix(event.Source, "sensor/") {
+			if b.sensors == nil || !b.sensors.VerifyEvent(event) {
+				b.logger.Warn().Str("event_id", event.ID).Msg("rejected invalid or inactive sensor event")
+				_ = msg.Term()
+				return
+			}
 		}
 		handler(event)
 		_ = msg.Ack()
