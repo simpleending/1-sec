@@ -18,6 +18,8 @@ func runtimeResponseEvidence(alert *core.Alert, event *core.SecurityEvent) {
 	}
 	alert.Metadata["original_event_id"] = event.ID
 	alert.Metadata["runtime_event_type"] = event.Type
+	alert.Metadata["runtime_event_source"] = event.Source
+	alert.Metadata["runtime_event_module"] = event.Module
 	if path := firstStringDetail(event, "path", "executed_path", "executable_path", "driver_path"); path != "" {
 		alert.Metadata["affected_path"] = path
 	}
@@ -74,6 +76,14 @@ func runtimeResponseEvidence(alert *core.Alert, event *core.SecurityEvent) {
 			}
 			pid = normalized
 		}
+	}
+	if pid != "" {
+		alert.Metadata["reported_process_id"] = pid
+	}
+	// Network syslog headers are sender assertions, even when they name this
+	// host. Preserve them for investigation without granting OS process authority.
+	if event.Source == "syslog" || event.Module == "syslog" {
+		return
 	}
 	if pid != "" && host != "" && validHost {
 		alert.Metadata["process_id"] = pid

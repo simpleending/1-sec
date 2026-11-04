@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 use async_nats::jetstream::{self, consumer::PullConsumer};
 use std::sync::Arc;
 use tokio::sync::Notify;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 const DIRECT_FIELD_SCAN_LIMIT: usize = 96 * 1024;
 const STREAM_SCAN_CHUNK_SIZE: usize = 64 * 1024;
@@ -184,9 +184,18 @@ impl NatsBridge {
                                     let js = js.clone();
                                     tokio::spawn(async move {
                                         let _permit = permit;
-                                        process_message(&msg, &matcher, &js).await;
-                                        if let Err(e) = msg.ack().await {
-                                            warn!(error = %e, "failed to ack message");
+                                        match process_message(&msg, &matcher, &js).await {
+                                            Ok(()) => {
+                                                if let Err(e) = msg.ack().await {
+                                                    warn!(error = %e, "failed to ack message");
+                                                }
+                                            }
+                                            Err(e) => {
+                                                warn!(error = %e, "match result not committed; retaining input for retry");
+                                                if let Err(e) = msg.ack_with(jetstream::AckKind::Nak(Some(std::time::Duration::from_secs(1)))).await {
+                                                    warn!(error = %e, "failed to schedule match retry");
+                                                }
+                                            }
                                         }
                                     });
                                 }
@@ -221,20 +230,20 @@ async fn process_message(
     msg: &async_nats::Message,
     matcher: &PatternMatcher,
     js: &jetstream::Context,
-) {
+) -> Result<()> {
     // Deserialize the security event
     let event: SecurityEvent = match serde_json::from_slice(&msg.payload) {
         Ok(e) => e,
         Err(e) => {
             debug!(error = %e, "failed to deserialize event, skipping");
-            return;
+            return Ok(());
         }
     };
 
     // Extract text fields from the event data for scanning
     let fields = extract_scannable_fields(&event);
     if fields.is_empty() {
-        return;
+        return Ok(());
     }
 
     // Dual-pass scan: raw fields first, then normalized fields. Large fields are
@@ -248,7 +257,7 @@ async fn process_message(
     // Only publish if we found matches
     if result.matches.is_empty() {
         debug!(event_id = %event.id, time_us = result.processing_time_us, "no matches");
-        return;
+        return Ok(());
     }
 
     info!(
@@ -267,16 +276,13 @@ async fn process_message(
         result.highest_severity.as_str()
     );
 
-    match serde_json::to_vec(&result) {
-        Ok(payload) => {
-            if let Err(e) = js.publish(subject, payload.into()).await {
-                error!(error = %e, event_id = %event.id, "failed to publish match result");
-            }
-        }
-        Err(e) => {
-            error!(error = %e, "failed to serialize match result");
-        }
-    }
+    let payload = serde_json::to_vec(&result).context("serializing match result")?;
+    js.publish(subject, payload.into())
+        .await
+        .context("sending match result")?
+        .await
+        .context("waiting for match result persistence acknowledgement")?;
+    Ok(())
 }
 
 fn enrich_match_context(result: &mut MatchResult, event: &SecurityEvent) {

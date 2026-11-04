@@ -117,8 +117,10 @@ func (p *AlertPipeline) Process(alert *Alert) {
 	p.mu.Lock()
 	if len(p.alerts) >= p.maxStore {
 		// Drop oldest 10% when full
-		drop := p.maxStore / 10
-		p.alerts = p.alerts[drop:]
+		drop := max(1, p.maxStore/10)
+		kept := copy(p.alerts, p.alerts[drop:])
+		clear(p.alerts[kept:])
+		p.alerts = p.alerts[:kept]
 	}
 	p.alerts = append(p.alerts, alert)
 	handlers := make([]AlertHandler, len(p.handlers))

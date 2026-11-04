@@ -10,12 +10,13 @@ import (
 
 func TestReadKeyCannotReadWebhookPolicySecrets(t *testing.T) {
 	engine := testEngineWithEnforcement("balanced", true)
-	defer engine.ResponseEngine.Stop()
+	engine.ResponseEngine.Stop()
 	engine.Config.Server.ReadOnlyKeys = []string{"monitor"}
-	for _, policy := range engine.ResponseEngine.GetPolicies() {
-		policy.Actions = append(policy.Actions, core.ResponseRule{Action: core.ActionWebhook, Params: map[string]string{"url": "HTTPS://receiver.example/hooks/capability-secret?key=other-secret", "auth_token": "bearer-secret"}})
-		break
-	}
+	engine.Config.Enforcement.Policies = map[string]core.ResponsePolicyYAML{"injection_shield": {
+		Enabled: true, MinSeverity: "HIGH", Actions: []core.ResponseRuleYAML{{Action: "webhook", Params: map[string]string{"url": "HTTPS://receiver.example/hooks/capability-secret?key=other-secret", "auth_token": "bearer-secret"}}},
+	}}
+	engine.ResponseEngine = core.NewResponseEngine(engine.Logger, nil, engine.Pipeline, engine.Config)
+	defer engine.ResponseEngine.Stop()
 	s := newTestServer(engine)
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/enforce/policies", nil)

@@ -1041,6 +1041,12 @@ func (g *Guard) handleModelSupplyChain(event *core.SecurityEvent) {
 				modelName, registry, finding),
 			"model_pickle_rce")
 	}
+	if finding := detectModelLoggingExecution(event); finding != "" {
+		g.raiseAlert(event, core.SeverityCritical,
+			"Executable Model Bundle Logging Configuration",
+			fmt.Sprintf("Model %s contains an observed logging handler expression with execution primitives (%s). Python logging configuration loaders may evaluate these fields. Review the complete bundle before loading; this is a content heuristic, not proof of execution.", modelName, finding),
+			"model_logging_config_execution")
+	}
 
 	if finding := validateModelArtifactStructure(event); finding != "" {
 		g.raiseAlert(event, core.SeverityHigh,
@@ -1049,6 +1055,43 @@ func (g *Guard) handleModelSupplyChain(event *core.SecurityEvent) {
 				modelName, registry, finding),
 			"model_artifact_structure")
 	}
+}
+
+var modelLoggingExecution = regexp.MustCompile(`(?i)(?:__import__|eval|exec|(?:os|subprocess)\s*\.\s*(?:system|popen|run|call|check_output|check_call))\s*\(`)
+
+// Bundle auxiliary files can execute before a model's weights are loaded. Inspect
+// only the supplied, bounded text; never load Python, INI handlers, or a model.
+func detectModelLoggingExecution(event *core.SecurityEvent) string {
+	texts := []string{getStringDetail(event, "model_config"), getStringDetail(event, "artifact_preview"), getStringDetail(event, "content"), getStringDetail(event, "model_preview"), string(modelScanWindow(event.RawData))}
+	for _, text := range texts {
+		text = text[:min(len(text), 64*1024)]
+		handler, expression := false, false
+		for _, line := range strings.Split(text, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, ";") {
+				continue
+			}
+			if strings.HasPrefix(trimmed, "[") {
+				end := strings.IndexByte(trimmed, ']')
+				handler = end > 0 && strings.HasPrefix(trimmed[1:end], "handler_")
+				expression = false
+				continue
+			}
+			if !handler {
+				continue
+			}
+			value := trimmed
+			if key, rest, ok := strings.Cut(trimmed, "="); ok && !strings.ContainsAny(strings.TrimSpace(key), "()'\" ") {
+				key = strings.ToLower(strings.TrimSpace(key))
+				expression = key == "class" || key == "args"
+				value = rest
+			}
+			if expression && modelLoggingExecution.MatchString(value) {
+				return "logging handler class/args"
+			}
+		}
+	}
+	return ""
 }
 
 func findLikelyModelImpersonation(modelName string) (string, int) {

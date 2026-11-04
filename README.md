@@ -24,7 +24,7 @@
 
 ## What is 1-SEC?
 
-1-SEC is an open-source (AGPLv3) all-in-one cybersecurity platform. Instead of running 10+ separate agents — WAF, IDS, log shipper, compliance scanner, LLM firewall — you run **one binary** that covers every attack surface through a shared NATS JetStream event bus.
+1-SEC is an open-source (AGPLv3) security telemetry and response engine. Its modules share a NATS JetStream event bus in **one operational binary**, with an optional Rust sidecar. Protection depends on relevant trusted telemetry, an enforcing integration where prevention is required, configured policies and operating-system privileges.
 
 - **Zero config by default** — secure out of the box, tune later
 - **One default operational binary** — no required external runtime services for core operation
@@ -32,6 +32,8 @@
 - **AI is additive** — all 16 modules work standalone; the AI analysis layer adds cross-module correlation on top
 
 Security intelligence reviews include verified code changes and regression checks. See the [October 13 implementation notes](docs/security-updates/2026-10-13.md) for SAML structure detection, agent identity checks, and exfiltration hardening.
+
+The [November 5 readiness review](docs/security-updates/2026-11-05-enterprise-readiness.md) records source fixes for attribution, evidence delivery, approvals and model-bundle configuration, plus the remaining enterprise identity, audit and capacity requirements. These source updates are not a new downloadable release or a certification claim.
 
 The [October 14 management-access update](docs/security-updates/2026-10-14.md) adds a deny-by-default decision API for trusted gateways and public management-exposure alerts. A gateway must enforce the decision before forwarding; installing 1-SEC alone does not put it in the equipment's request path.
 
@@ -354,7 +356,7 @@ kubectl exec deploy/1sec -- 1sec check
 ```
 
 The Helm chart includes:
-- Deployment with liveness/readiness probes on `/health`
+- Deployment with liveness/startup on `/live` and readiness on `/health`
 - PersistentVolumeClaim for NATS JetStream data
 - ConfigMap for config override
 - Secret for API keys (or reference an existing secret via `existingSecret`)
@@ -425,14 +427,12 @@ Adding a module = adding one import. No registration boilerplate.
 
 Authenticate your own scripts with an API key in the request header; there is no username/password or browser-login step. Follow the [connection guide](docs/connect-your-systems.md#send-events-from-your-application) to send canonical events from any language that supports HTTP.
 
-The engine exposes a REST API on port 1780. All endpoints except `/health`
-require an API key when `server.api_keys` or `server.read_only_keys` are
-configured. Without keys, read-only endpoints are served only on loopback binds
-unless `server.allow_unauthenticated_read` is set.
+The engine exposes a REST API on port 1780. With keys configured, data endpoints require the appropriate read/write key. `/health`, `/live` and the static dashboard shell are public. Without keys, read-only data is served only on loopback binds unless `server.allow_unauthenticated_read` is set; mutations remain blocked.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/health` | Health check |
+| GET | `/health` | Defensive component readiness |
+| GET | `/live` | HTTP process liveness |
 | GET | `/api/v1/status` | Engine status, module list, alert count |
 | GET | `/api/v1/modules` | All registered modules |
 | GET | `/api/v1/alerts` | Recent alerts (`?limit=N&min_severity=HIGH`) |

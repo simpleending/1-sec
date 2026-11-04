@@ -28,8 +28,6 @@ var (
 	sudoCmdRe = regexp.MustCompile(`(?i)sudo:.*COMMAND=(.+)`)
 	// Extract user from "for user X" or "user=X"
 	userExtractRe = regexp.MustCompile(`(?i)(?:for(?:\s+invalid)?\s+user\s+|user[=:\s]+)(\S+?)(?:\s|$|"|')`)
-	// Extract IP
-	ipExtractRe = regexp.MustCompile(`(?:from|src)\s+(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})`)
 )
 
 func NewAuthLogCollector(path, tag string) *AuthLogCollector {
@@ -48,56 +46,66 @@ func (c *AuthLogCollector) Start(ctx context.Context, bus *core.EventBus, logger
 	ctx, c.cancel = context.WithCancel(ctx)
 
 	return tailFile(ctx, c.path, func(line string) {
-		var eventType string
-		var severity core.Severity
-		var summary string
-
-		switch {
-		case authFailRe.MatchString(line):
-			eventType = "auth_failure"
-			severity = core.SeverityMedium
-			summary = "authentication failure"
-		case authSuccRe.MatchString(line):
-			eventType = "auth_success"
-			severity = core.SeverityInfo
-			summary = "authentication success"
-		case authSessRe.MatchString(line):
-			eventType = "session_activity"
-			severity = core.SeverityInfo
-			summary = "session activity"
-		case sudoCmdRe.MatchString(line):
-			eventType = "privilege_change"
-			severity = core.SeverityMedium
-			summary = "sudo command execution"
-		default:
-			// Skip lines that don't match known auth patterns
-			return
+		if event := c.parseLine(line); event != nil {
+			if err := bus.PublishEvent(event); err != nil {
+				logger.Error().Err(err).Msg("failed to publish authentication log event")
+			}
 		}
-
-		event := core.NewSecurityEvent(c.tag, eventType, severity, summary)
-		event.Source = "collector:" + c.tag
-
-		// Extract username
-		if m := userExtractRe.FindStringSubmatch(line); m != nil {
-			event.Details["username"] = m[1]
-			summary += " user=" + m[1]
-		}
-
-		// Extract source IP
-		if m := ipExtractRe.FindStringSubmatch(line); m != nil {
-			event.SourceIP = m[1]
-		}
-
-		// Extract sudo command
-		if m := sudoCmdRe.FindStringSubmatch(line); m != nil {
-			event.Details["command_line"] = strings.TrimSpace(m[1])
-		}
-
-		event.Summary = summary
-		event.RawData = []byte(line)
-
-		_ = bus.PublishEvent(event)
 	}, logger)
+}
+
+func (c *AuthLogCollector) parseLine(line string) *core.SecurityEvent {
+	var eventType string
+	var severity core.Severity
+	var summary string
+
+	switch {
+	case authFailRe.MatchString(line):
+		eventType = "auth_failure"
+		severity = core.SeverityMedium
+		summary = "authentication failure"
+	case authSuccRe.MatchString(line):
+		eventType = "auth_success"
+		severity = core.SeverityInfo
+		summary = "authentication success"
+	case authSessRe.MatchString(line):
+		eventType = "session_activity"
+		severity = core.SeverityInfo
+		summary = "session activity"
+	case sudoCmdRe.MatchString(line):
+		eventType = "privilege_change"
+		severity = core.SeverityMedium
+		summary = "sudo command execution"
+	default:
+		// Skip lines that don't match known auth patterns
+		return nil
+	}
+
+	event := core.NewSecurityEvent(c.tag, eventType, severity, summary)
+	event.Source = "collector:" + c.tag
+
+	// Extract username
+	if m := userExtractRe.FindStringSubmatch(line); m != nil {
+		event.Details["username"] = m[1]
+		summary += " user=" + m[1]
+	}
+
+	// The daemon owns the peer field; username substrings do not identify it.
+	if message, ok := core.SSHLogMessage(line); ok {
+		if peer, valid := core.SSHAuthPeer(message); valid {
+			event.SourceIP = peer
+		}
+	}
+
+	// Extract sudo command
+	if m := sudoCmdRe.FindStringSubmatch(line); m != nil {
+		event.Details["command_line"] = strings.TrimSpace(m[1])
+	}
+
+	event.Summary = summary
+	event.RawData = []byte(line)
+
+	return event
 }
 
 func (c *AuthLogCollector) Stop() error {

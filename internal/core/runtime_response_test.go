@@ -21,10 +21,14 @@ func runtimeActorAlert() *Alert {
 }
 
 func TestRuntimeContainmentBoundaryAcrossResponsePaths(t *testing.T) {
-	for _, unsafe := range []string{"valid", "file-only", "victim", "missing-host", "remote", "conflicting-host", "container", "name-only", "no-evidence", "fractional", "init"} {
+	for _, unsafe := range []string{"valid", "file-only", "victim", "missing-host", "remote", "conflicting-host", "container", "name-only", "no-evidence", "fractional", "init", "syslog-source", "syslog-module"} {
 		t.Run(unsafe, func(t *testing.T) {
 			a := runtimeActorAlert()
 			switch unsafe {
+			case "syslog-source":
+				a.Metadata["runtime_event_source"] = "syslog"
+			case "syslog-module":
+				a.Metadata["runtime_event_module"] = "syslog"
 			case "file-only":
 				a.Type = "sensitive_file_change"
 			case "victim":

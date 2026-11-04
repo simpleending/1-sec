@@ -2,6 +2,8 @@
 
 This follow-up addresses the runtime-target finding deferred in the earlier [incident review](2026-10-30-incident-review.md). It changes source behavior; it is not included in the downloadable v0.4.29 binaries and does not announce a new binary release.
 
+Subsequent correction: the [November 5 review](2026-11-05-enterprise-readiness.md) establishes that raw network syslog is not a trusted local process observation. Its headers remain alertable but cannot authorize local runtime termination. The historical host-field contract below applies to already trusted producers; a hostname/PID assertion alone does not authenticate a syslog sender.
+
 ## Corrected boundary
 
 Runtime process and fileless detections now retain the observed actor's normalized PID, descriptive name, reporting-host context and original event ID. Injection detections use an explicit `source_pid`; `target_pid` identifies the injection victim and never becomes a kill target. All file findings retain `affected_path` for investigation.

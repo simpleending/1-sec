@@ -64,15 +64,37 @@ type ApprovalHandler func(approval *PendingApproval)
 
 // ApprovalGate holds destructive actions pending human approval.
 type ApprovalGate struct {
-	mu       sync.Mutex
-	logger   zerolog.Logger
-	cfg      ApprovalGateConfig
-	pending  map[string]*PendingApproval
-	history  []*PendingApproval
-	handlers []ApprovalHandler
-	notifyFn func(pa *PendingApproval) // called when action enters pending state
-	ctx      context.Context
-	cancel   context.CancelFunc
+	mu            sync.Mutex
+	logger        zerolog.Logger
+	cfg           ApprovalGateConfig
+	pending       map[string]*PendingApproval
+	history       []*PendingApproval
+	handlers      []ApprovalHandler
+	notifyFn      func(pa *PendingApproval) // called when action enters pending state
+	approvedCount int
+	rejectedCount int
+	expiredCount  int
+	ctx           context.Context
+	cancel        context.CancelFunc
+}
+
+const approvalHistoryLimit = 1000
+
+func (ag *ApprovalGate) rememberDecisionLocked(pa *PendingApproval) {
+	switch pa.Status {
+	case "approved":
+		ag.approvedCount++
+	case "rejected":
+		ag.rejectedCount++
+	case "expired":
+		ag.expiredCount++
+	}
+	if len(ag.history) >= approvalHistoryLimit {
+		copy(ag.history, ag.history[1:])
+		ag.history[len(ag.history)-1] = nil
+		ag.history = ag.history[:len(ag.history)-1]
+	}
+	ag.history = append(ag.history, pa)
 }
 
 // NewApprovalGate creates a new approval gate.
@@ -226,12 +248,20 @@ func (ag *ApprovalGate) Approve(id string, decidedBy string) (*PendingApproval, 
 	}
 
 	now := time.Now().UTC()
+	if !now.Before(pa.ExpiresAt) {
+		pa.Status = "expired"
+		pa.DecidedAt = &now
+		delete(ag.pending, id)
+		ag.rememberDecisionLocked(pa)
+		ag.mu.Unlock()
+		return nil, fmt.Errorf("approval %s expired", id)
+	}
 	pa.Status = "approved"
 	pa.DecidedBy = decidedBy
 	pa.DecidedAt = &now
 
 	delete(ag.pending, id)
-	ag.history = append(ag.history, pa)
+	ag.rememberDecisionLocked(pa)
 
 	handlers := make([]ApprovalHandler, len(ag.handlers))
 	copy(handlers, ag.handlers)
@@ -270,7 +300,7 @@ func (ag *ApprovalGate) Reject(id string, decidedBy string) (*PendingApproval, e
 	pa.DecidedAt = &now
 
 	delete(ag.pending, id)
-	ag.history = append(ag.history, pa)
+	ag.rememberDecisionLocked(pa)
 
 	ag.logger.Info().
 		Str("approval_id", id).
@@ -317,20 +347,6 @@ func (ag *ApprovalGate) Stats() map[string]interface{} {
 	ag.mu.Lock()
 	defer ag.mu.Unlock()
 
-	approved := 0
-	rejected := 0
-	expired := 0
-	for _, pa := range ag.history {
-		switch pa.Status {
-		case "approved":
-			approved++
-		case "rejected":
-			rejected++
-		case "expired":
-			expired++
-		}
-	}
-
 	return map[string]interface{}{
 		"enabled":            ag.cfg.Enabled,
 		"pending_count":      len(ag.pending),
@@ -338,9 +354,11 @@ func (ag *ApprovalGate) Stats() map[string]interface{} {
 		"ttl_seconds":        ag.cfg.TTL.Seconds(),
 		"require_approval":   ag.cfg.RequireApproval,
 		"auto_approve_above": ag.cfg.AutoApproveAbove,
-		"total_approved":     approved,
-		"total_rejected":     rejected,
-		"total_expired":      expired,
+		"total_approved":     ag.approvedCount,
+		"total_rejected":     ag.rejectedCount,
+		"total_expired":      ag.expiredCount,
+		"history_retained":   len(ag.history),
+		"history_limit":      approvalHistoryLimit,
 	}
 }
 
@@ -356,7 +374,7 @@ func (ag *ApprovalGate) expireOldest() {
 		oldest.Status = "expired"
 		oldest.DecidedAt = &now
 		delete(ag.pending, oldest.ID)
-		ag.history = append(ag.history, oldest)
+		ag.rememberDecisionLocked(oldest)
 	}
 }
 
@@ -376,7 +394,7 @@ func (ag *ApprovalGate) expiryLoop() {
 					expTime := now.UTC()
 					pa.DecidedAt = &expTime
 					delete(ag.pending, id)
-					ag.history = append(ag.history, pa)
+					ag.rememberDecisionLocked(pa)
 					ag.logger.Warn().
 						Str("approval_id", id).
 						Str("action", string(pa.Action)).

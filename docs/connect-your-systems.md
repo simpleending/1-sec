@@ -140,8 +140,16 @@ For process/start/execution and fileless telemetry, supply the observed actor's 
 
 For injection telemetry, `source_pid` identifies the actor; `target_pid` identifies the victim and is never used as a kill target. Run the executor in the same host/PID namespace as its trusted collector. Host labels are telemetry assertions, not authentication; protect collector and API credentials.
 
+Network syslog is observational: its sender-supplied hostname, program and PID never authorize a local runtime kill, including when the header names this host or loopback. Use an authenticated, authorized endpoint producer for process containment. Unknown/ambiguous SSH log formats remain visible without guessing an actionable peer from a username substring. See the [November readiness and evidence update](security-updates/2026-11-05-enterprise-readiness.md).
+
 Dry-run, severity, approvals, allowlists and response policy still control whether an eligible action runs. Review skipped-action records when an alert lacks executable evidence. Runtime file-integrity events retain `affected_path` for investigation; changed configuration or victim files are not automatically quarantined. See the [source-update contract and tests](security-updates/2026-10-30-runtime-containment.md). These source fixes are not in downloadable v0.4.29 binaries.
 
 Read alerts or configure supported webhooks/response policies to connect detection to your own workflow. For an existing management gateway, `POST /api/v1/access/check` can supply an explicit decision after the operator configures its policy. The gateway must enforce that decision before forwarding and deny on errors/timeouts; see the [access-check contract](security-updates/2026-10-14.md#gateway-integration).
 
 Customers can implement these adapters in their own code. Sending telemetry does not automatically place 1-SEC inside their request or tool-execution path, and the event-ingestion acknowledgment is not authorization to proceed. These integration choices do not require adding a login system to 1-SEC.
+
+## Check readiness separately from liveness
+
+`GET /live` confirms that the HTTP process responds. `GET /health` is readiness and returns 503 when the broker is absent/disconnected, configured modules have not started, enabled archival is failing, or an enabled Rust process is absent. Both are unauthenticated probes. Helm liveness/startup use `/live` and readiness uses `/health`, so a temporary storage outage can remove readiness without creating a restart loop. These probes do not yet prove collector delivery, consumer progress or complete sensor coverage.
+
+Archival requires an explicitly writable, persistent `archive.dir`; hardened container defaults persist `/data/nats`, not `/data/archive`. Failed archive writes retry through retained broker deliveries. Committed gzip records use standard concatenated members; duplicate delivery remains possible. Review `write_failures`, `last_error` and broker retention limits, and test restoration before choosing an operating load or retention promise.

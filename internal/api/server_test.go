@@ -77,13 +77,13 @@ func TestHandleHealth_GET(t *testing.T) {
 	w := httptest.NewRecorder()
 	s.server.Handler.ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("unstarted engine status = %d, want %d", w.Code, http.StatusServiceUnavailable)
 	}
 	var body map[string]interface{}
 	json.NewDecoder(w.Body).Decode(&body)
-	if body["status"] != "healthy" {
-		t.Errorf("status = %v, want healthy", body["status"])
+	if body["status"] != "degraded" {
+		t.Errorf("status = %v, want degraded", body["status"])
 	}
 }
 
@@ -107,7 +107,7 @@ func TestHandleHealth_BypassesAuth(t *testing.T) {
 	w := httptest.NewRecorder()
 	s.server.Handler.ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
+	if w.Code != http.StatusServiceUnavailable {
 		t.Errorf("health should bypass auth, got status %d", w.Code)
 	}
 }

@@ -272,9 +272,28 @@ func (b *EventBus) PublishAlert(alert *Alert) error {
 
 // Subscribe creates a durable subscription to a subject pattern.
 func (b *EventBus) Subscribe(subject, durableName string, handler func(msg *nats.Msg)) error {
-	opts := []nats.SubOpt{nats.DeliverNew(), nats.AckExplicit()}
+	opts := []nats.SubOpt{nats.ManualAck()}
 	if durableName != "" {
-		opts = append(opts, nats.Durable(durableName))
+		// Own durable consumers explicitly. A library-created consumer is deleted
+		// by Unsubscribe, discarding its pending/retry state on normal shutdown.
+		stream, err := b.js.StreamNameBySubject(subject)
+		if err != nil {
+			return fmt.Errorf("finding stream for %s: %w", subject, err)
+		}
+		if _, err := b.js.ConsumerInfo(stream, durableName); errors.Is(err, nats.ErrConsumerNotFound) {
+			if _, err := b.js.AddConsumer(stream, &nats.ConsumerConfig{
+				Durable: durableName, DeliverSubject: nats.NewInbox(),
+				FilterSubject: subject, DeliverPolicy: nats.DeliverNewPolicy,
+				AckPolicy: nats.AckExplicitPolicy,
+			}); err != nil {
+				return fmt.Errorf("creating consumer %s: %w", durableName, err)
+			}
+		} else if err != nil {
+			return fmt.Errorf("reading consumer %s: %w", durableName, err)
+		}
+		opts = append(opts, nats.Bind(stream, durableName))
+	} else {
+		opts = append(opts, nats.DeliverNew(), nats.AckExplicit())
 	}
 	sub, err := b.js.Subscribe(subject, handler, opts...)
 	if err != nil {

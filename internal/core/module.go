@@ -34,6 +34,7 @@ type ModuleRegistry struct {
 	logger    zerolog.Logger
 	typeIndex map[string][]Module // event type → modules that handle it
 	catchAll  []Module            // modules that handle all events (nil EventTypes)
+	active    map[string]bool     // nonnil after lifecycle startup; only successful starts route
 
 	// Metrics
 	metrics *RegistryMetrics
@@ -41,12 +42,13 @@ type ModuleRegistry struct {
 
 // RegistryMetrics tracks event routing performance.
 type RegistryMetrics struct {
-	mu             sync.Mutex       `json:"-"`
-	EventsRouted   int64            `json:"events_routed"`
-	EventsDropped  int64            `json:"events_dropped"`
-	EventsByType   map[string]int64 `json:"events_by_type"`
-	ModuleErrors   map[string]int64 `json:"module_errors"`
-	RoutingSkipped int64            `json:"routing_skipped"` // events not matching any module
+	mu                sync.Mutex       `json:"-"`
+	EventsRouted      int64            `json:"events_routed"`
+	EventsDropped     int64            `json:"events_dropped"`
+	EventsByType      map[string]int64 `json:"events_by_type"`
+	ModuleErrors      map[string]int64 `json:"module_errors"`
+	RoutingSkipped    int64            `json:"routing_skipped"` // events not matching any module
+	EventTypeOverflow int64            `json:"event_type_overflow"`
 }
 
 // NewModuleRegistry creates a new ModuleRegistry.
@@ -101,7 +103,11 @@ func (r *ModuleRegistry) RouteEvent(event *SecurityEvent, logger zerolog.Logger)
 
 	r.metrics.mu.Lock()
 	r.metrics.EventsRouted++
-	r.metrics.EventsByType[event.Type]++
+	if _, tracked := r.metrics.EventsByType[event.Type]; tracked || len(r.metrics.EventsByType) < 1024 {
+		r.metrics.EventsByType[event.Type]++
+	} else {
+		r.metrics.EventTypeOverflow++
+	}
 	r.metrics.mu.Unlock()
 
 	routed := false
@@ -109,6 +115,9 @@ func (r *ModuleRegistry) RouteEvent(event *SecurityEvent, logger zerolog.Logger)
 	// Dispatch to modules that explicitly handle this event type
 	if mods, ok := r.typeIndex[event.Type]; ok {
 		for _, mod := range mods {
+			if r.active != nil && !r.active[mod.Name()] {
+				continue
+			}
 			if mod.Name() == event.Module {
 				continue // don't route back to source
 			}
@@ -119,6 +128,9 @@ func (r *ModuleRegistry) RouteEvent(event *SecurityEvent, logger zerolog.Logger)
 
 	// Dispatch to catch-all modules (those that returned nil/empty EventTypes)
 	for _, mod := range r.catchAll {
+		if r.active != nil && !r.active[mod.Name()] {
+			continue
+		}
 		if mod.Name() == event.Module {
 			continue
 		}
@@ -176,11 +188,12 @@ func (r *ModuleRegistry) GetMetrics() map[string]interface{} {
 		modErr[k] = v
 	}
 	return map[string]interface{}{
-		"events_routed":   r.metrics.EventsRouted,
-		"events_dropped":  r.metrics.EventsDropped,
-		"events_by_type":  byType,
-		"module_errors":   modErr,
-		"routing_skipped": r.metrics.RoutingSkipped,
+		"events_routed":       r.metrics.EventsRouted,
+		"events_dropped":      r.metrics.EventsDropped,
+		"events_by_type":      byType,
+		"module_errors":       modErr,
+		"routing_skipped":     r.metrics.RoutingSkipped,
+		"event_type_overflow": r.metrics.EventTypeOverflow,
 	}
 }
 
@@ -205,11 +218,12 @@ func (r *ModuleRegistry) All() []Module {
 
 // StartAll starts all registered modules that are enabled in config.
 func (r *ModuleRegistry) StartAll(ctx context.Context, bus *EventBus, pipeline *AlertPipeline, cfg *Config) error {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+	r.mu.Lock()
+	r.active = make(map[string]bool)
+	r.mu.Unlock()
 
-	for _, name := range r.order {
-		mod := r.modules[name]
+	for _, mod := range r.All() {
+		name := mod.Name()
 		if !cfg.IsModuleEnabled(name) {
 			r.logger.Info().Str("module", name).Msg("module disabled, skipping")
 			continue
@@ -218,6 +232,9 @@ func (r *ModuleRegistry) StartAll(ctx context.Context, bus *EventBus, pipeline *
 		if err := mod.Start(ctx, bus, pipeline, cfg); err != nil {
 			return fmt.Errorf("failed to start module %q: %w", name, err)
 		}
+		r.mu.Lock()
+		r.active[name] = true
+		r.mu.Unlock()
 		r.logger.Info().Str("module", name).Msg("module started")
 	}
 	return nil
@@ -225,17 +242,29 @@ func (r *ModuleRegistry) StartAll(ctx context.Context, bus *EventBus, pipeline *
 
 // StopAll stops all registered modules in reverse order.
 func (r *ModuleRegistry) StopAll() {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	for i := len(r.order) - 1; i >= 0; i-- {
-		name := r.order[i]
-		mod := r.modules[name]
+	mods := r.All()
+	r.mu.Lock()
+	active := r.active
+	r.active = make(map[string]bool)
+	r.mu.Unlock()
+	for i := len(mods) - 1; i >= 0; i-- {
+		mod := mods[i]
+		name := mod.Name()
+		if active != nil && !active[name] {
+			continue
+		}
 		r.logger.Info().Str("module", name).Msg("stopping module")
 		if err := mod.Stop(); err != nil {
 			r.logger.Error().Err(err).Str("module", name).Msg("error stopping module")
 		}
 	}
+}
+
+// ActiveCount reports modules whose lifecycle startup succeeded.
+func (r *ModuleRegistry) ActiveCount() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return len(r.active)
 }
 
 // Count returns the number of registered modules.

@@ -5,6 +5,9 @@ import "strconv"
 // Runtime file/privilege/container observations do not identify an actor in this
 // executor's PID namespace. Only explicitly attributed process detections qualify.
 func runtimeProcessResponseAllowed(alert *Alert) bool {
+	if alert.Metadata["runtime_event_source"] == "syslog" || alert.Metadata["runtime_event_module"] == "syslog" {
+		return false
+	}
 	evidence, _ := alert.Metadata["runtime_process_evidence"].(bool)
 	pid, _ := alert.Metadata["process_id"].(string)
 	n, err := strconv.ParseUint(pid, 10, 31)

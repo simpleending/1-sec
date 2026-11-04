@@ -4,7 +4,9 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -60,12 +62,18 @@ type Archiver struct {
 	fileOpenedAt   time.Time
 
 	// Metrics
-	eventsArchived int64
-	alertsArchived int64
-	filesRotated   int64
-	bytesWritten   int64
-	eventsSampled  int64            // events dropped by sampling
-	sampleCounters map[string]int64 // per-type counters for sampling
+	eventsArchived    int64
+	alertsArchived    int64
+	filesRotated      int64
+	bytesWritten      int64
+	eventsSampled     int64            // events dropped by sampling
+	sampleCounters    map[string]int64 // per-type counters for sampling
+	writeFailures     int64
+	responsesArchived int64
+	lastError         string
+	running           bool
+	closed            bool
+	syncFile          func(*os.File) error // nil uses File.Sync; private I/O fault seam
 }
 
 // NewArchiver creates a cold archiver.
@@ -117,27 +125,27 @@ func (a *Archiver) Start(ctx context.Context) error {
 			_ = msg.Ack()
 			return
 		}
-		a.writeRecord("event", msg.Data)
-		_ = msg.Ack()
+		a.archiveMessage("event", msg)
 	}); err != nil {
 		return fmt.Errorf("archiver subscribing to events: %w", err)
 	}
 
 	// Subscribe to all alerts
 	if err := a.bus.Subscribe("sec.alerts.>", "1sec-cold-archive-alerts", func(msg *nats.Msg) {
-		a.writeRecord("alert", msg.Data)
-		_ = msg.Ack()
+		a.archiveMessage("alert", msg)
 	}); err != nil {
 		return fmt.Errorf("archiver subscribing to alerts: %w", err)
 	}
 
 	// Subscribe to responses
 	if err := a.bus.Subscribe("sec.responses.>", "1sec-cold-archive-responses", func(msg *nats.Msg) {
-		a.writeRecord("response", msg.Data)
-		_ = msg.Ack()
+		a.archiveMessage("response", msg)
 	}); err != nil {
 		return fmt.Errorf("archiver subscribing to responses: %w", err)
 	}
+	a.mu.Lock()
+	a.running = true
+	a.mu.Unlock()
 
 	// Rotation ticker
 	go func() {
@@ -151,7 +159,9 @@ func (a *Archiver) Start(ctx context.Context) error {
 			case <-ticker.C:
 				a.mu.Lock()
 				if a.currentFile != nil && time.Since(a.fileOpenedAt) >= a.rotateInterval {
-					a.rotateFileLocked()
+					if err := a.rotateFileLocked(); err != nil {
+						a.recordFailureLocked(err)
+					}
 				}
 				a.mu.Unlock()
 			}
@@ -175,7 +185,26 @@ type archiveRecord struct {
 	Data      json.RawMessage `json:"data"`
 }
 
-func (a *Archiver) writeRecord(recordType string, data []byte) {
+func (a *Archiver) archiveMessage(recordType string, msg *nats.Msg) {
+	if err := a.writeRecord(recordType, msg.Data); err != nil {
+		a.logger.Error().Err(err).Msg("archive record not committed; retaining broker delivery")
+		if !json.Valid(msg.Data) {
+			// Invalid JSON cannot become a RawMessage envelope. Keep the original
+			// in its bounded source stream; do not spin on a poison delivery.
+			if err := msg.Term(); err != nil {
+				a.logger.Error().Err(err).Msg("terminating invalid archive delivery")
+			}
+		} else if err := msg.NakWithDelay(time.Second); err != nil {
+			a.logger.Error().Err(err).Msg("scheduling archive retry")
+		}
+		return
+	}
+	if err := msg.Ack(); err != nil {
+		a.logger.Error().Err(err).Msg("acknowledging committed archive record")
+	}
+}
+
+func (a *Archiver) writeRecord(recordType string, data []byte) (writeErr error) {
 	rec := archiveRecord{
 		Type:      recordType,
 		Timestamp: time.Now().UTC(),
@@ -184,30 +213,52 @@ func (a *Archiver) writeRecord(recordType string, data []byte) {
 
 	line, err := json.Marshal(rec)
 	if err != nil {
-		a.logger.Error().Err(err).Msg("failed to marshal archive record")
-		return
+		a.mu.Lock()
+		a.recordFailureLocked(err)
+		a.mu.Unlock()
+		return fmt.Errorf("marshaling archive record: %w", err)
 	}
 	line = append(line, '\n')
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	defer func() {
+		if writeErr != nil {
+			a.recordFailureLocked(writeErr)
+		} else {
+			a.lastError = ""
+		}
+	}()
+	if a.closed {
+		return fmt.Errorf("archive is closed")
+	}
 
 	if a.currentFile == nil {
 		if err := a.openFileLocked(); err != nil {
-			a.logger.Error().Err(err).Msg("failed to open archive file")
-			return
+			return fmt.Errorf("opening archive file: %w", err)
 		}
 	}
 
-	var n int
-	if a.cfg.Compress && a.currentGz != nil {
-		n, err = a.currentGz.Write(line)
-	} else {
-		n, err = a.currentFile.Write(line)
+	before, err := a.currentFile.Stat()
+	if err != nil {
+		return errors.Join(err, a.discardFailedFileLocked())
+	}
+	if a.currentGz != nil {
+		a.currentGz.Reset(a.currentFile)
+	}
+	n, err := writeArchiveLine(a.currentFile, a.currentGz, line)
+	if err == nil {
+		if a.syncFile != nil {
+			err = a.syncFile(a.currentFile)
+		} else {
+			err = a.currentFile.Sync()
+		}
 	}
 	if err != nil {
-		a.logger.Error().Err(err).Msg("failed to write archive record")
-		return
+		// Remove a partial record/member when the filesystem permits it. Retry
+		// opens a separate file, never appending behind a corrupt gzip tail.
+		rollbackErr := a.currentFile.Truncate(before.Size())
+		return errors.Join(err, rollbackErr, a.discardFailedFileLocked())
 	}
 
 	a.currentBytes += int64(n)
@@ -218,27 +269,64 @@ func (a *Archiver) writeRecord(recordType string, data []byte) {
 		a.eventsArchived++
 	case "alert":
 		a.alertsArchived++
+	case "response":
+		a.responsesArchived++
 	}
 
 	// Rotate on size
 	if a.currentBytes >= a.cfg.RotateBytes {
-		a.rotateFileLocked()
+		if err := a.rotateFileLocked(); err != nil {
+			return err
+		}
 	}
+	return nil
+}
+
+func (a *Archiver) discardFailedFileLocked() error {
+	path, noCommittedRecords := a.currentPath, a.currentBytes == 0
+	err := a.closeFileLocked()
+	if noCommittedRecords && path != "" {
+		if removeErr := os.Remove(path); !errors.Is(removeErr, os.ErrNotExist) {
+			err = errors.Join(err, removeErr)
+		}
+	}
+	return err
+}
+
+// Finish one independent gzip member before syncing/acknowledging its record.
+// Standard gzip multistream readers (including archive restore) read all members.
+func writeArchiveLine(dst io.Writer, gz *gzip.Writer, line []byte) (int, error) {
+	writer := dst
+	if gz != nil {
+		writer = gz
+	}
+	n, err := writer.Write(line)
+	if err == nil && n != len(line) {
+		err = io.ErrShortWrite
+	}
+	if gz != nil {
+		err = errors.Join(err, gz.Close())
+	}
+	return n, err
+}
+
+func (a *Archiver) recordFailureLocked(err error) {
+	a.writeFailures++
+	a.lastError = err.Error()
 }
 
 func (a *Archiver) openFileLocked() error {
-	ts := time.Now().UTC().Format("20060102T150405Z")
+	ts := time.Now().UTC().Format("20060102T150405.000000000Z")
 	ext := ".ndjson"
 	if a.cfg.Compress {
 		ext = ".ndjson.gz"
 	}
-	filename := fmt.Sprintf("1sec-archive-%s%s", ts, ext)
-	path := filepath.Join(a.cfg.Dir, filename)
-
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+	f, err := os.CreateTemp(a.cfg.Dir, fmt.Sprintf("1sec-archive-%s-*%s", ts, ext))
 	if err != nil {
 		return err
 	}
+	path := f.Name()
+	filename := filepath.Base(path)
 	if err := RestrictPrivatePath(f.Name(), false); err != nil {
 		f.Close()
 		return err
@@ -257,27 +345,40 @@ func (a *Archiver) openFileLocked() error {
 	return nil
 }
 
-func (a *Archiver) rotateFileLocked() {
-	a.closeFileLocked()
+func (a *Archiver) rotateFileLocked() error {
+	err := a.closeFileLocked()
 	a.filesRotated++
 	// Next write will open a new file
+	return err
 }
 
 func (a *Archiver) closeFile() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.closeFileLocked()
+	a.closed, a.running = true, false
+	if err := a.closeFileLocked(); err != nil {
+		a.recordFailureLocked(err)
+	}
 }
 
-func (a *Archiver) closeFileLocked() {
+func (a *Archiver) closeFileLocked() error {
+	var err error
 	if a.currentGz != nil {
-		a.currentGz.Close()
+		err = a.currentGz.Close()
 		a.currentGz = nil
 	}
 	if a.currentFile != nil {
-		a.currentFile.Close()
+		err = errors.Join(err, a.currentFile.Sync(), a.currentFile.Close())
 		a.currentFile = nil
 	}
+	return err
+}
+
+// Ready reports subscription startup and the latest archive write outcome.
+func (a *Archiver) Ready() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.running && !a.closed && a.lastError == ""
 }
 
 // shouldSample returns true if this event should be DROPPED (not archived)
@@ -332,15 +433,19 @@ func (a *Archiver) Status() map[string]interface{} {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return map[string]interface{}{
-		"enabled":         a.cfg.Enabled,
-		"dir":             a.cfg.Dir,
-		"events_archived": a.eventsArchived,
-		"alerts_archived": a.alertsArchived,
-		"events_sampled":  a.eventsSampled,
-		"files_rotated":   a.filesRotated,
-		"bytes_written":   a.bytesWritten,
-		"current_file":    filepath.Base(a.currentPath),
-		"current_bytes":   a.currentBytes,
-		"compress":        a.cfg.Compress,
+		"enabled":            a.cfg.Enabled,
+		"dir":                a.cfg.Dir,
+		"events_archived":    a.eventsArchived,
+		"alerts_archived":    a.alertsArchived,
+		"responses_archived": a.responsesArchived,
+		"write_failures":     a.writeFailures,
+		"last_error":         a.lastError,
+		"running":            a.running && !a.closed,
+		"events_sampled":     a.eventsSampled,
+		"files_rotated":      a.filesRotated,
+		"bytes_written":      a.bytesWritten,
+		"current_file":       filepath.Base(a.currentPath),
+		"current_bytes":      a.currentBytes,
+		"compress":           a.cfg.Compress,
 	}
 }

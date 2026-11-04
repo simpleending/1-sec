@@ -226,6 +226,7 @@ func (s *SyslogServer) processMessage(raw string, sourceIP string) {
 	event := core.NewSecurityEvent("syslog", classifySyslogEvent(parsed), severity, parsed.Message)
 	event.Source = "syslog"
 	event.SourceIP = sourceIP
+	event.Details["syslog_transport_ip"] = sourceIP
 	event.Details["syslog_facility"] = parsed.Facility
 	event.Details["syslog_severity"] = parsed.Severity
 	event.Details["syslog_hostname"] = parsed.Hostname
@@ -283,7 +284,7 @@ func parseSyslog(raw string) *syslogMessage {
 			AppName:  m[5],
 			ProcID:   m[6],
 			MsgID:    m[7],
-			Message:  m[8],
+			Message:  rfc5424MessageBody(m[8]),
 		}
 		if t, err := time.Parse(time.RFC3339, m[3]); err == nil {
 			msg.Timestamp = &t
@@ -332,6 +333,49 @@ func parseSyslog(raw string) *syslogMessage {
 	}
 
 	return nil
+}
+
+// Separate RFC5424 STRUCTURED-DATA from MSG before format-specific log parsing.
+// Keep legacy messages without this field and malformed data observable.
+func rfc5424MessageBody(tail string) string {
+	if tail == "-" {
+		return ""
+	}
+	if strings.HasPrefix(tail, "- ") {
+		return strings.TrimPrefix(tail[2:], "\xef\xbb\xbf")
+	}
+	if !strings.HasPrefix(tail, "[") {
+		return strings.TrimPrefix(tail, "\xef\xbb\xbf")
+	}
+	i := 0
+	for i < len(tail) && tail[i] == '[' {
+		i++
+		closed := false
+		for i < len(tail) {
+			if tail[i] == '\\' {
+				if i+1 >= len(tail) {
+					return tail
+				}
+				i += 2
+			} else if tail[i] == ']' {
+				i++
+				closed = true
+				break
+			} else {
+				i++
+			}
+		}
+		if !closed {
+			return tail
+		}
+	}
+	if i == len(tail) {
+		return ""
+	}
+	if tail[i] != ' ' {
+		return tail
+	}
+	return strings.TrimPrefix(tail[i+1:], "\xef\xbb\xbf")
 }
 
 // syslogSeverityToCore maps syslog severity (0=emergency..7=debug) to core.Severity.
@@ -469,12 +513,27 @@ func enrichEventFromSyslog(event *core.SecurityEvent, msg *syslogMessage) {
 	}
 
 	// Extract source IP from message body (overrides UDP/TCP source if present)
-	if m := syslogSrcIPRe.FindStringSubmatch(combined); m != nil {
-		event.Details["syslog_reported_ip"] = m[1]
+	reportedIP := ""
+	sshRecord := core.IsSSHLogProgram(msg.AppName)
+	message := msg.Message
+	if body, ok := core.SSHLogMessage(message); ok {
+		message, sshRecord = body, true
+	}
+	sshRecord = sshRecord || core.IsSSHAuthMessage(message)
+	if sshRecord {
+		reportedIP, _ = core.SSHAuthPeer(message)
+	} else if m := syslogSrcIPRe.FindStringSubmatch(combined); m != nil && net.ParseIP(m[1]) != nil {
+		reportedIP = m[1]
+	}
+	if reportedIP != "" {
+		event.Details["syslog_reported_ip"] = reportedIP
 		// If the event's SourceIP is the syslog relay, use the reported IP instead
 		if event.SourceIP == "" || event.SourceIP == "127.0.0.1" {
-			event.SourceIP = m[1]
+			event.SourceIP = reportedIP
 		}
+	} else if sshRecord && event.SourceIP == "127.0.0.1" {
+		// An unparsed SSH peer must not turn the relay into a firewall target.
+		event.SourceIP = ""
 	}
 
 	// Extract destination IP

@@ -130,7 +130,7 @@ affinity: {}
 # ── Health probes ─────────────────────────────────────────────────────────────
 livenessProbe:
   httpGet:
-    path: /health
+    path: /live
     port: api
   initialDelaySeconds: 10
   periodSeconds: 30
@@ -148,7 +148,7 @@ readinessProbe:
 
 startupProbe:
   httpGet:
-    path: /health
+    path: /live
     port: api
   initialDelaySeconds: 2
   periodSeconds: 5

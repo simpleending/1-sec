@@ -63,6 +63,7 @@ func NewServer(engine *core.Engine) *Server {
 	mux.HandleFunc("/api/v1/escalation/status", s.handleEscalationStatus)
 	mux.HandleFunc("/api/v1/token-vault/status", s.handleTokenVaultStatus)
 	mux.HandleFunc("/health", s.handleHealth)
+	mux.HandleFunc("/live", s.handleLiveness)
 
 	// ── Mutating endpoints (require write scope) ────────────────────
 	mux.HandleFunc("/api/v1/alerts/clear", s.handleAlertsClear)
@@ -151,6 +152,16 @@ func (s *Server) Stop() error {
 	return s.server.Shutdown(ctx)
 }
 
+func (s *Server) handleLiveness(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "alive"})
+}
+
+// Health is readiness; liveness must not restart a process merely because its
+// archive storage or broker is temporarily unavailable.
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
@@ -160,7 +171,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	checks := make(map[string]interface{})
 	healthy := true
 
-	// Check bus connection (nil bus = not yet started, not a failure)
+	// An unstarted/disconnected event bus cannot provide defensive coverage.
 	if s.engine.Bus != nil {
 		busOK := s.engine.Bus.IsConnected()
 		checks["bus_connected"] = busOK
@@ -169,19 +180,38 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		checks["bus_connected"] = false
+		healthy = false
 	}
 
 	// Check modules registered
-	moduleCount := s.engine.Registry.Count()
+	moduleCount := s.engine.Registry.ActiveCount()
 	checks["modules_running"] = moduleCount
+	expected := 0
+	for _, mod := range s.engine.Registry.All() {
+		if s.engine.Config.IsModuleEnabled(mod.Name()) {
+			expected++
+		}
+	}
+	checks["modules_expected"] = expected
+	if moduleCount != expected {
+		healthy = false
+	}
 
 	// Check archiver if enabled
 	if s.engine.Config.Archive.Enabled {
-		if s.engine.Archiver != nil {
+		if s.engine.Archiver != nil && s.engine.Archiver.Ready() {
 			checks["archiver"] = "running"
 		} else {
 			checks["archiver"] = "failed"
 			healthy = false
+		}
+	}
+	if s.engine.Config.RustEngine.Enabled {
+		if s.engine.RustSidecar == nil || !s.engine.RustSidecar.Running() {
+			checks["rust_process"] = "not_running"
+			healthy = false
+		} else {
+			checks["rust_process"] = "running"
 		}
 	}
 
@@ -761,7 +791,7 @@ func authMiddleware(next http.Handler, cfg *core.Config, logger zerolog.Logger) 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Always allow health checks without auth
 		asset, _ := dashboardAsset(r.URL.Path)
-		if r.URL.Path == "/health" || asset != "" {
+		if r.URL.Path == "/health" || r.URL.Path == "/live" || asset != "" {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -878,7 +908,7 @@ func rateLimitMiddleware(next http.Handler, requestsPerSecond int) http.Handler 
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Skip rate limiting for health checks
-		if r.URL.Path == "/health" {
+		if r.URL.Path == "/health" || r.URL.Path == "/live" {
 			next.ServeHTTP(w, r)
 			return
 		}

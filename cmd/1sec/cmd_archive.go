@@ -193,19 +193,13 @@ func cmdArchiveRestore(args []string) {
 		if e.IsDir() || !strings.HasPrefix(e.Name(), "1sec-archive-") {
 			continue
 		}
-		// Extract timestamp from filename: 1sec-archive-20260220T150405Z.ndjson.gz
-		name := e.Name()
-		tsStr := strings.TrimPrefix(name, "1sec-archive-")
-		tsStr = strings.TrimSuffix(tsStr, ".ndjson.gz")
-		tsStr = strings.TrimSuffix(tsStr, ".ndjson")
-
-		fileTime, err := time.Parse("20060102T150405Z", tsStr)
+		fileTime, err := archiveFileTime(e.Name())
 		if err != nil {
 			continue
 		}
 
 		if !fileTime.Before(fromDate) && fileTime.Before(toDate) {
-			matchingFiles = append(matchingFiles, filepath.Join(*dir, name))
+			matchingFiles = append(matchingFiles, filepath.Join(*dir, e.Name()))
 		}
 	}
 
@@ -241,6 +235,30 @@ func cmdArchiveRestore(args []string) {
 
 	fmt.Printf("\n%s Restore complete: %d events, %d alerts restored, %d skipped\n",
 		green("✓"), totalEvents, totalAlerts, totalSkipped)
+}
+
+// Read both historical second-resolution names and unique committed-archive names.
+func archiveFileTime(name string) (time.Time, error) {
+	if !strings.HasPrefix(name, "1sec-archive-") || (!strings.HasSuffix(name, ".ndjson") && !strings.HasSuffix(name, ".ndjson.gz")) {
+		return time.Time{}, fmt.Errorf("invalid archive filename")
+	}
+	stamp := strings.TrimPrefix(name, "1sec-archive-")
+	stamp = strings.TrimSuffix(strings.TrimSuffix(stamp, ".gz"), ".ndjson")
+	end := strings.IndexByte(stamp, 'Z')
+	if end < 0 {
+		return time.Time{}, fmt.Errorf("archive filename has no UTC timestamp")
+	}
+	if suffix := stamp[end+1:]; suffix != "" {
+		if len(suffix) < 2 || suffix[0] != '-' {
+			return time.Time{}, fmt.Errorf("invalid archive uniqueness suffix")
+		}
+		for _, ch := range suffix[1:] {
+			if ch < '0' || ch > '9' {
+				return time.Time{}, fmt.Errorf("invalid archive uniqueness suffix")
+			}
+		}
+	}
+	return time.Parse("20060102T150405.999999999Z", stamp[:end+1])
 }
 
 func restoreFile(path, apiBase, apiKey string, dryRun bool, typeFilter map[string]bool) (events, alerts, skipped int, err error) {

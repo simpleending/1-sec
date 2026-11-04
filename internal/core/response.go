@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"sync"
 	"time"
 
@@ -157,6 +158,33 @@ func NewResponseEngine(logger zerolog.Logger, bus *EventBus, pipeline *AlertPipe
 				re.recordAction(pa.Alert, pa.Rule, pa.Target, ActionStatusSkipped, "alert does not authorize this action", 0, nil)
 				return
 			}
+			policy, ok := re.policyForAlert(pa.Alert)
+			if !ok || !policy.Enabled || pa.Alert.Severity < policy.MinSeverity || re.ctx.Err() != nil || re.cfg.Enforcement == nil || !re.cfg.Enforcement.Enabled {
+				re.recordAction(pa.Alert, pa.Rule, pa.Target, ActionStatusSkipped, "approved action is no longer enabled", 0, nil)
+				return
+			}
+			var currentRule ResponseRule
+			matched := false
+			for _, rule := range policy.Actions {
+				if rule.Action == pa.Action && maps.Equal(rule.Params, pa.Rule.Params) {
+					currentRule, matched = rule, true
+					break
+				}
+			}
+			source, _ := pa.Alert.Metadata["source_ip"].(string)
+			if !matched || pa.Alert.Severity < currentRule.MinSeverity || re.isAllowListed(policy, source) {
+				re.recordAction(pa.Alert, pa.Rule, pa.Target, ActionStatusSkipped, "approved action no longer matches current policy", 0, nil)
+				return
+			}
+			if re.cfg.Enforcement.GetDryRun() || policy.DryRun || currentRule.DryRun || pa.Rule.DryRun {
+				re.recordAction(pa.Alert, pa.Rule, pa.Target, ActionStatusDryRun, "dry run at approval execution", 0, nil)
+				return
+			}
+			key := fmt.Sprintf("%s:%s:%s", pa.Module, pa.Action, re.resolveTarget(pa.Alert, currentRule))
+			if re.isOnCooldown(key, policy.Cooldown) || !re.checkRateLimit(pa.Module, policy.MaxActionsPerMin) {
+				re.recordAction(pa.Alert, pa.Rule, pa.Target, ActionStatusSkipped, "approved action exceeds current cooldown or rate limit", 0, nil)
+				return
+			}
 			executor, exists := re.executors[pa.Action]
 			if !exists {
 				re.logger.Error().Str("action", string(pa.Action)).Msg("approved action has no executor")
@@ -172,6 +200,7 @@ func NewResponseEngine(logger zerolog.Logger, bus *EventBus, pipeline *AlertPipe
 				re.recordAction(pa.Alert, pa.Rule, pa.Target, ActionStatusFailed, details, durationMs, err)
 			} else {
 				re.recordAction(pa.Alert, pa.Rule, pa.Target, ActionStatusSuccess, details, durationMs, nil)
+				re.setCooldown(key, policy.Cooldown)
 			}
 		})
 		// Notify SOC team via webhook dispatcher when an action enters the approval gate
@@ -306,13 +335,9 @@ func (re *ResponseEngine) Stop() {
 
 // handleAlert is the core decision loop: check policies, enforce cooldowns/rate limits, execute actions.
 func (re *ResponseEngine) handleAlert(alert *Alert) {
-	policy, ok := re.policies[alert.Module]
+	policy, ok := re.policyForAlert(alert)
 	if !ok {
-		// Check for wildcard/default policy
-		policy, ok = re.policies["*"]
-		if !ok {
-			return
-		}
+		return
 	}
 
 	if !policy.Enabled {
@@ -425,6 +450,20 @@ func (re *ResponseEngine) handleAlert(alert *Alert) {
 			re.setCooldown(cooldownKey, policy.Cooldown)
 		}
 	}
+}
+
+func (re *ResponseEngine) policyForAlert(alert *Alert) (*ResponsePolicy, bool) {
+	re.mu.RLock()
+	defer re.mu.RUnlock()
+	p, ok := re.policies[alert.Module]
+	if !ok {
+		p, ok = re.policies["*"]
+	}
+	if !ok {
+		return nil, false
+	}
+	copy := *p
+	return &copy, true
 }
 
 // Operational status and aggregate observations do not establish executable targets.
@@ -606,7 +645,13 @@ func (re *ResponseEngine) GetPolicies() map[string]*ResponsePolicy {
 	defer re.mu.RUnlock()
 	out := make(map[string]*ResponsePolicy, len(re.policies))
 	for k, v := range re.policies {
-		out[k] = v
+		copy := *v
+		copy.Actions = append([]ResponseRule(nil), v.Actions...)
+		for i := range copy.Actions {
+			copy.Actions[i].Params = maps.Clone(copy.Actions[i].Params)
+		}
+		copy.AllowList = append([]string(nil), v.AllowList...)
+		out[k] = &copy
 	}
 	return out
 }
