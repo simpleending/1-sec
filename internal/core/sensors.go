@@ -235,12 +235,16 @@ func (r *SensorRegistry) Ready() bool {
 }
 
 func sensorToken() (string, string, string, error) {
+	return identityToken(SensorTokenPrefix)
+}
+
+func identityToken(prefix string) (string, string, string, error) {
 	secret := make([]byte, 32)
 	if _, err := rand.Read(secret); err != nil {
 		return "", "", "", err
 	}
 	id := uuid.NewString()
-	token := SensorTokenPrefix + id + "." + hex.EncodeToString(secret)
+	token := prefix + id + "." + hex.EncodeToString(secret)
 	hash := sha256.Sum256([]byte(token))
 	return token, id, hex.EncodeToString(hash[:]), nil
 }
@@ -274,9 +278,18 @@ func (r *SensorRegistry) Enroll(spec SensorSpec) (SensorInfo, string, error) {
 }
 
 func (r *SensorRegistry) Rotate(id string) (SensorInfo, string, error) {
+	return r.RotateWithLocalGrant(id, true)
+}
+
+// RotateWithLocalGrant checks the stored grant under the same lock as rotation;
+// a concurrent enrollment cannot turn an observation-only request into a grant.
+func (r *SensorRegistry) RotateWithLocalGrant(id string, allowLocal bool) (SensorInfo, string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	record, ok := r.records[id]
+	if ok && record.AllowLocalResponse && !allowLocal {
+		return SensorInfo{}, "", ErrOperatorPermission
+	}
 	if !ok || !r.activeLocked(record, record.CredentialID) {
 		return SensorInfo{}, "", fmt.Errorf("sensor unavailable or expired")
 	}

@@ -4,6 +4,8 @@ import (
 	"embed"
 	"net/http"
 	"strings"
+
+	"github.com/1sec-project/1sec/internal/core"
 )
 
 //go:embed ui/index.html ui/app.js ui/style.css
@@ -50,6 +52,11 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDashboardAccess(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
+		return
+	}
+	if info, ok := r.Context().Value(operatorContextKey{}).(core.OperatorInfo); ok {
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, 200, map[string]interface{}{"scope": "operator", "operator": info, "permissions": core.PermissionsForRole(info.Role)})
 		return
 	}
 	key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")

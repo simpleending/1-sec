@@ -31,6 +31,15 @@ server:
   # tls_cert: "/etc/1sec/tls/server.crt"
   # tls_key:  "/etc/1sec/tls/server.key"
 
+operators:
+  enabled: false
+  # Bootstrap named administrators with an existing write key, then enable strict
+  # mode and restart. Strict mode rejects shared API keys and requires cloud
+  # remote commands to be disabled; the privileged internal broker is separate.
+  require_named: false
+  # Default: bus.data_dir/operator-identity. Preserve current state on recovery.
+  # state_dir: "/var/lib/1sec/operator-identity"
+
 sensors:
   enabled: false
   # Set true after enrolling producers to reject shared-key HTTP event ingestion.

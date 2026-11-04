@@ -250,8 +250,14 @@ func (s *Server) handleEnforceApprove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	decidedBy := "api:" + r.RemoteAddr
-	pa, err := re.ApprovalGate.Approve(id, decidedBy)
+	decidedBy := operatorDecisionActor(r)
+	var authorize func() bool
+	if info, ok := r.Context().Value(operatorContextKey{}).(core.OperatorInfo); ok {
+		authorize = func() bool {
+			return s.engine.Operators != nil && s.engine.Operators.Authorize(info, core.PermissionApprovals)
+		}
+	}
+	pa, err := re.ApprovalGate.ApproveAuthorized(id, decidedBy, authorize)
 	if err != nil {
 		s.writeEnforcementJSON(w, http.StatusNotFound, map[string]interface{}{"error": err.Error()})
 		return
@@ -293,7 +299,7 @@ func (s *Server) handleEnforceReject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	decidedBy := "api:" + r.RemoteAddr
+	decidedBy := operatorDecisionActor(r)
 	pa, err := re.ApprovalGate.Reject(id, decidedBy)
 	if err != nil {
 		s.writeEnforcementJSON(w, http.StatusNotFound, map[string]interface{}{"error": err.Error()})

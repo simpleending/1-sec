@@ -48,6 +48,14 @@ jobs:
       - name: Test
         run: go test -race -timeout 120s ./...
 
+      - name: Set up Node for embedded dashboard tests
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - name: Test embedded dashboard permissions
+        run: node --test internal/api/ui/app.test.cjs
+
       - name: Vulnerability check
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest

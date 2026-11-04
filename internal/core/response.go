@@ -154,6 +154,10 @@ func NewResponseEngine(logger zerolog.Logger, bus *EventBus, pipeline *AlertPipe
 		re.ApprovalGate = NewApprovalGate(logger, cfg.Enforcement.ApprovalGate)
 		// When an action is approved, re-execute it
 		re.ApprovalGate.AddHandler(func(pa *PendingApproval) {
+			if !pa.DecisionAuthorized() {
+				re.recordAction(pa.Alert, pa.Rule, pa.Target, ActionStatusSkipped, "approving operator authority is no longer active", 0, nil)
+				return
+			}
 			if !responseActionAllowed(pa.Alert, pa.Action) {
 				re.recordAction(pa.Alert, pa.Rule, pa.Target, ActionStatusSkipped, "alert does not authorize this action", 0, nil)
 				return
@@ -188,6 +192,10 @@ func NewResponseEngine(logger zerolog.Logger, bus *EventBus, pipeline *AlertPipe
 			executor, exists := re.executors[pa.Action]
 			if !exists {
 				re.logger.Error().Str("action", string(pa.Action)).Msg("approved action has no executor")
+				return
+			}
+			if !pa.DecisionAuthorized() {
+				re.recordAction(pa.Alert, pa.Rule, pa.Target, ActionStatusSkipped, "approving operator authority is no longer active", 0, nil)
 				return
 			}
 			start := time.Now()

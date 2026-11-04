@@ -28,6 +28,7 @@ type Config struct {
 	Escalation       EscalationConfig        `yaml:"escalation"`
 	ManagementAccess ManagementAccessConfig  `yaml:"management_access"`
 	Sensors          SensorConfig            `yaml:"sensors"`
+	Operators        OperatorConfig          `yaml:"operators"`
 }
 
 // TokenVaultConfig holds settings for Auth0 Token Vault integration.
@@ -418,7 +419,7 @@ func (c *Config) LogLevel() string {
 
 // AuthEnabled returns true if API key authentication is configured.
 func (c *Config) AuthEnabled() bool {
-	return len(c.Server.APIKeys) > 0 || len(c.Server.ReadOnlyKeys) > 0
+	return c.Operators.Enabled || len(c.Server.APIKeys) > 0 || len(c.Server.ReadOnlyKeys) > 0
 }
 
 // ServerHostIsLoopback returns true when the REST API bind host is loopback.
@@ -457,6 +458,9 @@ func (c *Config) ValidateAPIKey(key string) string {
 // Validate checks the configuration for common errors and returns a list of
 // warnings and a list of errors. Errors are fatal; warnings are informational.
 func (c *Config) Validate() (warnings []string, errs []string) {
+	if c.Operators.RequireNamed && (!c.Operators.Enabled || c.Cloud.RemoteCommandsEnabled) {
+		errs = append(errs, "operators.require_named requires operators.enabled and cloud.remote_commands_enabled=false")
+	}
 	if _, err := NewManagementAccessPolicy(c.ManagementAccess); err != nil {
 		errs = append(errs, err.Error())
 	}

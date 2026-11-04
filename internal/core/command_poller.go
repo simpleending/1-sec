@@ -81,6 +81,10 @@ func NewCommandPoller(engine *Engine) *CommandPoller {
 
 // Start begins the polling loop.
 func (cp *CommandPoller) Start() {
+	if cp.cfg.Operators.RequireNamed {
+		cp.logger.Info().Msg("cloud command polling disabled by named operator enforcement")
+		return
+	}
 	if !cp.cfg.Cloud.Enabled || cp.cfg.Cloud.APIKey == "" || !cp.cfg.Cloud.RemoteCommandsEnabled || cp.cfg.Cloud.InstanceID == "" {
 		cp.logger.Info().Msg("command polling disabled (cloud not configured)")
 		return
@@ -269,6 +273,9 @@ func (cp *CommandPoller) ackCommand(cmdID, status, result, errMsg string, claimT
 }
 
 func (cp *CommandPoller) executeCommand(cmd CloudCommand) (string, error) {
+	if cp.cfg.Operators.RequireNamed {
+		return "", fmt.Errorf("cloud commands cannot bypass named operator enforcement")
+	}
 	switch cmd.Type {
 	case "approve":
 		return cp.executeApprove(cmd)

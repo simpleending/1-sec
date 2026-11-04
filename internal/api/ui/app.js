@@ -10,6 +10,7 @@
     ['Dead letters', 'enforce/webhooks/dead-letters'], ['Token vault', 'token-vault/status'], ['Configuration', 'config'], ['Logs', 'logs?limit=100'],
   ];
   const $ = id => document.getElementById(id);
+  let permissions = null;
   let key = '', scope = 'read', connected = false, active = sections[0], snapshot = null, generation = 0, requestSerial = 0;
   function message(value) { $('message').textContent = value; }
   async function api(endpoint, method = 'GET', body) {
@@ -17,19 +18,26 @@
       headers: { ...(key ? { Authorization: 'Bearer ' + key } : {}), ...(body ? { 'Content-Type': 'application/json' } : {}) },
       ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(10000) });
     const result = await response.json();
-    if (!response.ok) throw new Error(result.error || 'Engine returned ' + response.status);
+    if (!response.ok) { const error = new Error(result.error || 'Engine returned ' + response.status); error.status = response.status; throw error; }
     return result;
   }
   function element(tag, text) { const node = document.createElement(tag); if (text !== undefined) node.textContent = String(text); return node; }
+  function may(endpoint) {
+    if (!Array.isArray(permissions)) return scope === 'write';
+    const permission = endpoint.startsWith('enforce/approve/') || endpoint.startsWith('enforce/reject/') ? 'approvals.decide'
+      : endpoint.startsWith('enforce/policies/') || endpoint.startsWith('enforce/dry-run/') || endpoint === 'enforce/config' ? 'policies.manage'
+      : endpoint === 'config/reload' ? 'engine.manage' : '';
+    return permission !== '' && permissions.includes(permission);
+  }
   function action(label, endpoint, body) {
     const button = element('button', label);
-    button.type = 'button'; button.disabled = scope !== 'write';
+    button.type = 'button'; button.disabled = !may(endpoint);
     button.addEventListener('click', async () => {
-      if (!connected || scope !== 'write' || !window.confirm(label + '? This changes the running engine.')) return;
+      if (!connected || !may(endpoint) || !window.confirm(label + '? This changes the running engine.')) return;
       button.disabled = true;
       try { const result = await api(endpoint, 'POST', body); message(result.message || label + ' completed'); await refresh(); }
       catch (error) { message(error.message); }
-      finally { button.disabled = scope !== 'write'; }
+      finally { button.disabled = !may(endpoint); }
     });
     return button;
   }
@@ -45,12 +53,12 @@
       const form = element('form'), label = element('label', 'Approval severity threshold');
       const select = element('select');
       for (const value of ['', 'LOW', 'MEDIUM', 'HIGH', 'CRITICAL']) { const option = element('option', value || 'Disabled'); option.value = value; select.append(option); }
-      select.value = snapshot.approval_gate?.auto_approve_above || ''; select.disabled = scope !== 'write';
+      select.value = snapshot.approval_gate?.auto_approve_above || ''; select.disabled = !may('enforce/config');
       label.append(select); form.append(label);
-      const save = element('button', 'Apply approval threshold'); save.disabled = scope !== 'write'; form.append(save);
+      const save = element('button', 'Apply approval threshold'); save.disabled = !may('enforce/config'); form.append(save);
       form.addEventListener('submit', async event => {
         event.preventDefault();
-        if (scope !== 'write') return;
+        if (!may('enforce/config')) return;
         try { await api('enforce/config', 'POST', { auto_approve_above: select.value }); message('Approval threshold updated'); await refresh(); }
         catch (error) { message(error.message); }
       });
@@ -89,10 +97,17 @@
     if (!connected) return;
     const serial = ++requestSerial, requestGeneration = generation, endpoint = active[1];
     try {
+      const access = await api('ui-access');
+      if (requestGeneration !== generation || serial !== requestSerial || !connected) return;
+      scope = access.scope; permissions = access.permissions || null;
+      $('scope').textContent = access.operator ? access.operator.id + ' · ' + access.operator.role : scope + ' access';
       const result = await api(endpoint);
       if (requestGeneration !== generation || serial !== requestSerial || !connected || endpoint !== active[1]) return;
       snapshot = result; render(); message('Updated ' + new Date().toLocaleTimeString() + ' · ' + scope + ' access');
-    } catch (error) { if (requestGeneration === generation && serial === requestSerial) message(error.message); }
+    } catch (error) { if (requestGeneration === generation && serial === requestSerial) {
+      if (error.status === 401 || error.status === 403) { connected = false; key = ''; permissions = null; scope = 'read'; snapshot = null; render(); $('scope').textContent = 'Disconnected'; }
+      message(error.message);
+    } }
   }
   for (const section of sections) {
     const button = element('button', section[0]); button.type = 'button';
@@ -106,11 +121,11 @@
   }
   $('connect').addEventListener('submit', async event => {
     event.preventDefault(); const attempt = ++generation; key = $('key').value.trim(); $('key').value = ''; connected = false;
-    snapshot = null; render(); scope = 'read'; $('scope').textContent = 'Connecting';
-    try { const access = await api('ui-access'); if (attempt !== generation) return; scope = access.scope; connected = true; $('scope').textContent = scope + ' access'; await refresh(); }
+    snapshot = null; permissions = null; render(); scope = 'read'; $('scope').textContent = 'Connecting';
+    try { const access = await api('ui-access'); if (attempt !== generation) return; scope = access.scope; permissions = access.permissions || null; connected = true; $('scope').textContent = access.operator ? access.operator.id + ' · ' + access.operator.role : scope + ' access'; await refresh(); }
     catch (error) { if (attempt !== generation) return; key = ''; $('scope').textContent = 'Disconnected'; message(error.message); }
   });
-  $('disconnect').addEventListener('click', () => { generation++; key = ''; $('key').value = ''; connected = false; scope = 'read'; snapshot = null; render(); $('scope').textContent = 'Disconnected'; message('Disconnected. Credential and data cleared.'); });
+  $('disconnect').addEventListener('click', () => { generation++; key = ''; $('key').value = ''; connected = false; scope = 'read'; permissions = null; snapshot = null; render(); $('scope').textContent = 'Disconnected'; message('Disconnected. Credential and data cleared.'); });
   $('reload').addEventListener('click', refresh);
   $('filter').addEventListener('input', render);
   let timer;

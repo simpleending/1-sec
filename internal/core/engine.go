@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -17,6 +18,7 @@ import (
 type Engine struct {
 	Config          *Config
 	Sensors         *SensorRegistry
+	Operators       *OperatorRegistry
 	Bus             *EventBus
 	Registry        *ModuleRegistry
 	Pipeline        *AlertPipeline
@@ -41,9 +43,12 @@ type Engine struct {
 // NewEngine creates a new 1SEC engine.
 func NewEngine(cfg *Config) (*Engine, error) {
 	for _, key := range append(append([]string(nil), cfg.Server.APIKeys...), cfg.Server.ReadOnlyKeys...) {
-		if strings.HasPrefix(key, SensorTokenPrefix) {
-			return nil, fmt.Errorf("operator keys must not use the reserved sensor credential prefix")
+		if strings.HasPrefix(key, SensorTokenPrefix) || strings.HasPrefix(key, OperatorTokenPrefix) {
+			return nil, fmt.Errorf("shared keys must not use reserved identity credential prefixes")
 		}
+	}
+	if cfg.Operators.RequireNamed && (!cfg.Operators.Enabled || cfg.Cloud.RemoteCommandsEnabled) {
+		return nil, fmt.Errorf("operators.require_named requires operators.enabled and disables cloud remote commands")
 	}
 	logBuffer := NewLogRingBuffer(5000)
 
@@ -96,6 +101,28 @@ func NewEngine(cfg *Config) (*Engine, error) {
 		if err != nil {
 			cancel()
 			return nil, fmt.Errorf("loading sensor identity: %w", err)
+		}
+	}
+
+	if cfg.Operators.Enabled {
+		dir := cfg.Operators.StateDir
+		if dir == "" {
+			dir = filepath.Join(cfg.Bus.DataDir, "operator-identity")
+		}
+		var err error
+		engine.Operators, err = NewOperatorRegistry(dir)
+		if err == nil && !engine.Operators.HasAdministrator() && (cfg.Operators.RequireNamed || len(cfg.Server.APIKeys) == 0) {
+			err = fmt.Errorf("bootstrap an active administrator using a shared write key before requiring named operators")
+		}
+		if err != nil {
+			cancel()
+			if engine.Operators != nil {
+				_ = engine.Operators.Close()
+			}
+			if engine.Sensors != nil {
+				_ = engine.Sensors.Close()
+			}
+			return nil, fmt.Errorf("loading operator identity: %w", err)
 		}
 	}
 
@@ -311,10 +338,14 @@ func (e *Engine) Shutdown() error {
 	}
 
 	e.Logger.Info().Msg("1SEC engine stopped")
+	var closeErr error
 	if e.Sensors != nil {
-		return e.Sensors.Close()
+		closeErr = e.Sensors.Close()
 	}
-	return nil
+	if e.Operators != nil {
+		closeErr = errors.Join(closeErr, e.Operators.Close())
+	}
+	return closeErr
 }
 
 // Context returns the engine's context.

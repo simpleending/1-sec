@@ -45,18 +45,23 @@ func DefaultApprovalGateConfig() ApprovalGateConfig {
 
 // PendingApproval represents an action awaiting human approval.
 type PendingApproval struct {
-	ID        string       `json:"id"`
-	AlertID   string       `json:"alert_id"`
-	Module    string       `json:"module"`
-	Action    ActionType   `json:"action"`
-	Target    string       `json:"target"`
-	Rule      ResponseRule `json:"rule"`
-	Alert     *Alert       `json:"alert"`
-	CreatedAt time.Time    `json:"created_at"`
-	ExpiresAt time.Time    `json:"expires_at"`
-	Status    string       `json:"status"` // "pending", "approved", "rejected", "expired"
-	DecidedBy string       `json:"decided_by,omitempty"`
-	DecidedAt *time.Time   `json:"decided_at,omitempty"`
+	ID                 string       `json:"id"`
+	AlertID            string       `json:"alert_id"`
+	Module             string       `json:"module"`
+	Action             ActionType   `json:"action"`
+	Target             string       `json:"target"`
+	Rule               ResponseRule `json:"rule"`
+	Alert              *Alert       `json:"alert"`
+	CreatedAt          time.Time    `json:"created_at"`
+	ExpiresAt          time.Time    `json:"expires_at"`
+	Status             string       `json:"status"` // "pending", "approved", "rejected", "expired"
+	DecidedBy          string       `json:"decided_by,omitempty"`
+	DecidedAt          *time.Time   `json:"decided_at,omitempty"`
+	decisionAuthorized func() bool
+}
+
+func (pa *PendingApproval) DecisionAuthorized() bool {
+	return pa.decisionAuthorized == nil || pa.decisionAuthorized()
 }
 
 // ApprovalHandler is called when an action is approved and should be executed.
@@ -235,6 +240,15 @@ func (ag *ApprovalGate) Submit(alert *Alert, rule ResponseRule, target string) s
 
 // Approve approves a pending action and triggers execution.
 func (ag *ApprovalGate) Approve(id string, decidedBy string) (*PendingApproval, error) {
+	return ag.ApproveAuthorized(id, decidedBy, nil)
+}
+
+// ApproveAuthorized binds named operator authority to the dispatch, rather than
+// trusting a display name or a role snapshot captured before revocation.
+func (ag *ApprovalGate) ApproveAuthorized(id string, decidedBy string, authorize func() bool) (*PendingApproval, error) {
+	if authorize != nil && !authorize() {
+		return nil, fmt.Errorf("operator authority is no longer active")
+	}
 	ag.mu.Lock()
 	pa, ok := ag.pending[id]
 	if !ok {
@@ -258,6 +272,7 @@ func (ag *ApprovalGate) Approve(id string, decidedBy string) (*PendingApproval, 
 	}
 	pa.Status = "approved"
 	pa.DecidedBy = decidedBy
+	pa.decisionAuthorized = authorize
 	pa.DecidedAt = &now
 
 	delete(ag.pending, id)

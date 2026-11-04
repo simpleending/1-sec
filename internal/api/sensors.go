@@ -46,9 +46,18 @@ func (s *Server) handleSensors(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 400, "invalid_request", "invalid sensor grant")
 			return
 		}
-		info, token, err := s.engine.Sensors.Enroll(spec)
+		var info core.SensorInfo
+		var token string
+		err := s.withSensorPermission(r, func(allowLocal bool) error {
+			if spec.AllowLocalResponse && !allowLocal {
+				return core.ErrOperatorPermission
+			}
+			var err error
+			info, token, err = s.engine.Sensors.Enroll(spec)
+			return err
+		})
 		if err != nil {
-			writeError(w, 400, "invalid_grant", err.Error())
+			writeOperatorError(w, err)
 			return
 		}
 		s.logger.Info().Str("sensor_id", info.ID).Str("credential_id", info.CredentialID).Msg("sensor enrolled")
@@ -75,16 +84,22 @@ func (s *Server) handleSensorAction(w http.ResponseWriter, r *http.Request) {
 	}
 	switch parts[1] {
 	case "revoke":
-		if err := s.engine.Sensors.Revoke(parts[0]); err != nil {
+		if err := s.withSensorPermission(r, func(bool) error { return s.engine.Sensors.Revoke(parts[0]) }); err != nil {
 			writeError(w, 400, "unavailable", "sensor revocation failed")
 			return
 		}
 		s.logger.Info().Str("sensor_id", parts[0]).Msg("sensor revoked")
 		writeJSON(w, 200, map[string]string{"status": "revoked", "sensor_id": parts[0]})
 	case "rotate":
-		info, token, err := s.engine.Sensors.Rotate(parts[0])
+		var info core.SensorInfo
+		var token string
+		err := s.withSensorPermission(r, func(allowLocal bool) error {
+			var err error
+			info, token, err = s.engine.Sensors.RotateWithLocalGrant(parts[0], allowLocal)
+			return err
+		})
 		if err != nil {
-			writeError(w, 400, "unavailable", "sensor rotation failed")
+			writeOperatorError(w, err)
 			return
 		}
 		s.logger.Info().Str("sensor_id", info.ID).Str("credential_id", info.CredentialID).Msg("sensor credential rotated")

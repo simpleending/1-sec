@@ -75,3 +75,56 @@ test('read-only connections inspect data and cannot use local enforcement contro
   app.disconnect();
   assert.equal(app.get('raw').textContent, 'null');
 });
+
+test('named responder can approve while policy and live-mode controls stay disabled', async () => {
+  const app = fixture(async url => response(url === '/api/v1/ui-access'
+    ? { scope: 'operator', operator: { id: 'alice', role: 'responder' }, permissions: ['read', 'approvals.decide'] }
+    : url.includes('approvals/pending') ? { pending: [{ id: 'approval-1' }] } : { enabled: true }));
+  await app.connect();
+  assert.equal(app.get('scope').textContent, 'alice · responder');
+  const enforcement = app.get('navigation').children.find(button => button.textContent === 'Enforcement');
+  enforcement.listeners.click(); await new Promise(resolve => setImmediate(resolve));
+  assert.ok(app.get('controls').children.every(button => button.disabled));
+  const approvals = app.get('navigation').children.find(button => button.textContent === 'Approvals');
+  approvals.listeners.click(); await new Promise(resolve => setImmediate(resolve));
+  const buttons = [];
+  function visit(node) { if (node.textContent === 'Approve' || node.textContent === 'Reject') buttons.push(node); for (const child of node.children) visit(child); }
+  visit(app.get('content'));
+  assert.equal(buttons.length, 2);
+  assert.ok(buttons.every(button => !button.disabled));
+  app.disconnect();
+  assert.equal(app.get('raw').textContent, 'null');
+});
+
+test('refresh applies a role downgrade before rendering action controls', async () => {
+  let role = 'responder';
+  const app = fixture(async url => response(url === '/api/v1/ui-access'
+    ? { scope: 'operator', operator: { id: 'alice', role }, permissions: role === 'responder' ? ['read', 'approvals.decide'] : ['read'] }
+    : url.includes('approvals/pending') ? { pending: [{ id: 'approval-1' }] } : { enabled: true }));
+  await app.connect();
+  app.get('navigation').children.find(button => button.textContent === 'Approvals').listeners.click();
+  await new Promise(resolve => setImmediate(resolve));
+  role = 'viewer'; await app.get('reload').listeners.click();
+  assert.equal(app.get('scope').textContent, 'alice · viewer');
+  const buttons = [];
+  function visit(node) { if (node.textContent === 'Approve' || node.textContent === 'Reject') buttons.push(node); for (const child of node.children) visit(child); }
+  visit(app.get('content'));
+  assert.equal(buttons.length, 2);
+  assert.ok(buttons.every(button => button.disabled));
+});
+
+test('authorization failure clears the named credential and private snapshot', async () => {
+  let revoked = false, requests = 0;
+  const app = fixture(async url => {
+    requests++;
+    if (revoked) return { ok: false, status: 403, json: async () => ({ error: 'inactive operator' }) };
+    return response(url === '/api/v1/ui-access' ? { scope: 'operator', operator: { id: 'alice', role: 'viewer' }, permissions: ['read'] } : { status: 'private snapshot' });
+  });
+  app.get('key').value = 'named-fixture'; await app.connect();
+  assert.match(app.get('raw').textContent, /private snapshot/);
+  revoked = true; await app.get('reload').listeners.click();
+  assert.equal(app.get('scope').textContent, 'Disconnected');
+  assert.equal(app.get('raw').textContent, 'null');
+  const before = requests; await app.get('reload').listeners.click();
+  assert.equal(requests, before);
+});

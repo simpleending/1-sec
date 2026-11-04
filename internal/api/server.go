@@ -70,6 +70,9 @@ func NewServer(engine *core.Engine) *Server {
 	mux.HandleFunc("/api/v1/events", s.handleIngestEvent)
 	mux.HandleFunc("/api/v1/sensors", s.handleSensors)
 	mux.HandleFunc("/api/v1/sensors/", s.handleSensorAction)
+	mux.HandleFunc("/api/v1/operators", s.handleOperators)
+	mux.HandleFunc("/api/v1/operators/me", s.handleOperatorMe)
+	mux.HandleFunc("/api/v1/operators/", s.handleOperatorAction)
 	mux.HandleFunc("/api/v1/access/check", s.handleManagementAccessCheck)
 	mux.HandleFunc("/api/v1/enforce/policies/", s.handleEnforcePolicyAction)
 	mux.HandleFunc("/api/v1/enforce/dry-run/", s.handleEnforceDryRun)
@@ -86,7 +89,7 @@ func NewServer(engine *core.Engine) *Server {
 	handler := corsMiddleware(
 		loggingMiddleware(
 			rateLimitMiddleware(
-				authMiddleware(mux, engine.Config, s.logger, engine.Sensors),
+				s.operatorAuthMiddleware(mux, authMiddleware(mux, engine.Config, s.logger, engine.Sensors)),
 				100, // 100 requests per second per IP
 			),
 			s.logger,
@@ -110,6 +113,8 @@ func (s *Server) Start() error {
 	s.logger.Info().Str("addr", s.server.Addr).Msg("API server starting")
 	if s.engine.Config.AuthEnabled() {
 		s.logger.Info().
+			Bool("named_operators", s.engine.Config.Operators.Enabled).
+			Bool("require_named", s.engine.Config.Operators.RequireNamed).
 			Int("write_keys", len(s.engine.Config.Server.APIKeys)).
 			Int("read_only_keys", len(s.engine.Config.Server.ReadOnlyKeys)).
 			Msg("API authentication enabled")
@@ -172,6 +177,13 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 	checks := make(map[string]interface{})
 	healthy := true
+	if s.engine.Config.Operators.Enabled {
+		ready := s.engine.Operators != nil && s.engine.Operators.Ready()
+		checks["operator_identity_ready"] = ready
+		if !ready {
+			healthy = false
+		}
+	}
 	if s.engine.Config.Sensors.Enabled {
 		ready := s.engine.Sensors != nil && s.engine.Sensors.Ready()
 		checks["sensor_identity_ready"] = ready
@@ -799,6 +811,9 @@ var mutatingPaths = map[string]bool{
 
 // isMutatingPath returns true if the request path requires write scope.
 func isMutatingPath(path, method string) bool {
+	if path == "/api/v1/operators" || strings.HasPrefix(path, "/api/v1/operators/") {
+		return path != "/api/v1/operators/me"
+	}
 	if (path == "/api/v1/sensors" || strings.HasPrefix(path, "/api/v1/sensors/")) && method != http.MethodGet && method != http.MethodHead {
 		return true
 	}
