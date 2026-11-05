@@ -29,6 +29,8 @@ type Config struct {
 	ManagementAccess ManagementAccessConfig  `yaml:"management_access"`
 	Sensors          SensorConfig            `yaml:"sensors"`
 	Operators        OperatorConfig          `yaml:"operators"`
+	Audit            AuditConfig             `yaml:"audit"`
+	AuditReceiver    AuditReceiverConfig     `yaml:"audit_receiver"`
 }
 
 // TokenVaultConfig holds settings for Auth0 Token Vault integration.
@@ -230,6 +232,7 @@ func DefaultConfig() *Config {
 			},
 		},
 		Archive: DefaultArchiveConfig(),
+		Audit:   AuditConfig{RequireRemoteAck: true},
 		Cloud: CloudConfig{
 			Enabled:           false,
 			APIURL:            "https://1-sec.dev/api/v1",
@@ -458,6 +461,9 @@ func (c *Config) ValidateAPIKey(key string) string {
 // Validate checks the configuration for common errors and returns a list of
 // warnings and a list of errors. Errors are fatal; warnings are informational.
 func (c *Config) Validate() (warnings []string, errs []string) {
+	if err := validateAuditConfig(c); err != nil {
+		errs = append(errs, err.Error())
+	}
 	if c.Operators.RequireNamed && (!c.Operators.Enabled || c.Cloud.RemoteCommandsEnabled) {
 		errs = append(errs, "operators.require_named requires operators.enabled and cloud.remote_commands_enabled=false")
 	}

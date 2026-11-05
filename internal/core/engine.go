@@ -19,6 +19,8 @@ type Engine struct {
 	Config          *Config
 	Sensors         *SensorRegistry
 	Operators       *OperatorRegistry
+	Audit           *AuditService
+	AuditReceiver   *AuditReceiver
 	Bus             *EventBus
 	Registry        *ModuleRegistry
 	Pipeline        *AlertPipeline
@@ -43,12 +45,15 @@ type Engine struct {
 // NewEngine creates a new 1SEC engine.
 func NewEngine(cfg *Config) (*Engine, error) {
 	for _, key := range append(append([]string(nil), cfg.Server.APIKeys...), cfg.Server.ReadOnlyKeys...) {
-		if strings.HasPrefix(key, SensorTokenPrefix) || strings.HasPrefix(key, OperatorTokenPrefix) {
+		if strings.HasPrefix(key, SensorTokenPrefix) || strings.HasPrefix(key, OperatorTokenPrefix) || strings.HasPrefix(key, AuditTokenPrefix) {
 			return nil, fmt.Errorf("shared keys must not use reserved identity credential prefixes")
 		}
 	}
 	if cfg.Operators.RequireNamed && (!cfg.Operators.Enabled || cfg.Cloud.RemoteCommandsEnabled) {
 		return nil, fmt.Errorf("operators.require_named requires operators.enabled and disables cloud remote commands")
+	}
+	if err := validateAuditConfig(cfg); err != nil {
+		return nil, err
 	}
 	logBuffer := NewLogRingBuffer(5000)
 
@@ -126,6 +131,31 @@ func NewEngine(cfg *Config) (*Engine, error) {
 		}
 	}
 
+	var auditErr error
+	if cfg.AuditReceiver.Enabled {
+		engine.AuditReceiver, auditErr = NewAuditReceiver(cfg.AuditReceiver)
+	}
+	if auditErr == nil && cfg.Audit.Enabled {
+		auditCfg := cfg.Audit
+		if auditCfg.Dir == "" {
+			auditCfg.Dir = filepath.Join(cfg.Bus.DataDir, "audit")
+		}
+		engine.Audit, auditErr = NewAuditService(auditCfg)
+	}
+	if auditErr != nil {
+		cancel()
+		if engine.AuditReceiver != nil {
+			_ = engine.AuditReceiver.Close()
+		}
+		if engine.Operators != nil {
+			_ = engine.Operators.Close()
+		}
+		if engine.Sensors != nil {
+			_ = engine.Sensors.Close()
+		}
+		return nil, fmt.Errorf("loading durable audit: %w", auditErr)
+	}
+
 	// Add console alert handler if enabled
 	if cfg.Alerts.EnableConsole {
 		engine.Pipeline.AddHandler(func(alert *Alert) {
@@ -160,6 +190,9 @@ func (e *Engine) Start() error {
 		return fmt.Errorf("starting event bus: %w", err)
 	}
 	e.Bus = bus
+	if e.Audit != nil {
+		e.Audit.Start(e.ctx)
+	}
 	bus.sensors = e.Sensors
 	if e.RustSidecar != nil {
 		e.RustSidecar.token = bus.token
@@ -191,7 +224,7 @@ func (e *Engine) Start() error {
 	// Start response engine (enforcement layer) — subscribes to alerts and
 	// executes configured response actions (block IP, kill process, etc.)
 	if e.Config.Enforcement != nil && e.Config.Enforcement.Enabled {
-		e.ResponseEngine = NewResponseEngine(e.Logger, e.Bus, e.Pipeline, e.Config)
+		e.ResponseEngine = NewResponseEngine(e.Logger, e.Bus, e.Pipeline, e.Config, e.Audit)
 		e.ResponseEngine.Start(e.ctx)
 	}
 
@@ -344,6 +377,12 @@ func (e *Engine) Shutdown() error {
 	}
 	if e.Operators != nil {
 		closeErr = errors.Join(closeErr, e.Operators.Close())
+	}
+	if e.Audit != nil {
+		closeErr = errors.Join(closeErr, e.Audit.Close())
+	}
+	if e.AuditReceiver != nil {
+		closeErr = errors.Join(closeErr, e.AuditReceiver.Close())
 	}
 	return closeErr
 }

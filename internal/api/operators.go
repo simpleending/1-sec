@@ -21,6 +21,9 @@ func requiredPermission(path, method string) (core.Permission, bool) {
 	if path == "/api/v1/operators/me" && method == http.MethodGet {
 		return core.PermissionRead, true
 	}
+	if path == "/api/v1/audit/status" && method == http.MethodGet {
+		return core.PermissionRead, true
+	}
 	if path == "/api/v1/operators" || strings.HasPrefix(path, "/api/v1/operators/") {
 		return core.PermissionOperators, method == http.MethodGet || method == http.MethodPost || method == http.MethodPatch
 	}

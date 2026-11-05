@@ -88,6 +88,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintf(w, "  %-14s  %s\n", bold("enforce"), "Manage automated threat response / enforcement")
 	fmt.Fprintf(w, "  %-14s  %s\n", bold("collect"), "Start reference collectors (log tailers, GitHub)")
 	fmt.Fprintf(w, "  %-14s  %s\n", bold("archive"), "Manage cold archive (status, list, restore)")
+	fmt.Fprintf(w, "  %-14s  %s\n", bold("audit-collector"), "Run a dedicated HTTPS audit receiver")
 	fmt.Fprintf(w, "  %-14s  %s\n", bold("setup"), "Guided interactive setup wizard")
 	fmt.Fprintf(w, "  %-14s  %s\n", bold("doctor"), "Comprehensive health check with fix suggestions")
 	fmt.Fprintf(w, "  %-14s  %s\n", bold("completions"), "Generate shell completion scripts")

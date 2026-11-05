@@ -60,6 +60,7 @@ func NewServer(engine *core.Engine) *Server {
 	mux.HandleFunc("/api/v1/metrics", s.handleMetrics)
 	mux.HandleFunc("/api/v1/event-schemas", s.handleEventSchemas)
 	mux.HandleFunc("/api/v1/archive/status", s.handleArchiveStatus)
+	mux.HandleFunc("/api/v1/audit/status", s.handleAuditStatus)
 	mux.HandleFunc("/api/v1/escalation/status", s.handleEscalationStatus)
 	mux.HandleFunc("/api/v1/token-vault/status", s.handleTokenVaultStatus)
 	mux.HandleFunc("/health", s.handleHealth)
@@ -89,7 +90,7 @@ func NewServer(engine *core.Engine) *Server {
 	handler := corsMiddleware(
 		loggingMiddleware(
 			rateLimitMiddleware(
-				s.operatorAuthMiddleware(mux, authMiddleware(mux, engine.Config, s.logger, engine.Sensors)),
+				s.auditReceiverMiddleware(s.auditDenials(s.operatorAuthMiddleware(s.auditMutation(mux), authMiddleware(s.auditMutation(mux), engine.Config, s.logger, engine.Sensors)))),
 				100, // 100 requests per second per IP
 			),
 			s.logger,
@@ -177,6 +178,20 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 	checks := make(map[string]interface{})
 	healthy := true
+	if s.engine.Config.Audit.Enabled {
+		ready := s.engine.Audit != nil && s.engine.Audit.Status().Ready
+		checks["durable_audit_ready"] = ready
+		if !ready {
+			healthy = false
+		}
+	}
+	if s.engine.Config.AuditReceiver.Enabled {
+		ready := s.engine.AuditReceiver != nil && s.engine.AuditReceiver.Ready()
+		checks["audit_receiver_ready"] = ready
+		if !ready {
+			healthy = false
+		}
+	}
 	if s.engine.Config.Operators.Enabled {
 		ready := s.engine.Operators != nil && s.engine.Operators.Ready()
 		checks["operator_identity_ready"] = ready
@@ -846,6 +861,10 @@ func authMiddleware(next http.Handler, cfg *core.Config, logger zerolog.Logger, 
 			return
 		}
 		key := requestAPIKey(r)
+		if strings.HasPrefix(key, core.AuditTokenPrefix) {
+			writeError(w, http.StatusForbidden, "audit_scope", "audit credentials only permit collector ingestion")
+			return
+		}
 		if strings.HasPrefix(key, core.SensorTokenPrefix) {
 			if !sensorTransportAllowed(r) {
 				writeError(w, http.StatusForbidden, "tls_required", "sensor credentials require TLS or a loopback proxy")

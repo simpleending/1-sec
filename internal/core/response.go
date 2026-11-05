@@ -115,7 +115,7 @@ type ActionExecutor interface {
 }
 
 // NewResponseEngine creates a new enforcement engine.
-func NewResponseEngine(logger zerolog.Logger, bus *EventBus, pipeline *AlertPipeline, cfg *Config) *ResponseEngine {
+func NewResponseEngine(logger zerolog.Logger, bus *EventBus, pipeline *AlertPipeline, cfg *Config, audits ...*AuditService) *ResponseEngine {
 	ctx, cancel := context.WithCancel(context.Background())
 	re := &ResponseEngine{
 		logger:     logger.With().Str("component", "response_engine").Logger(),
@@ -145,6 +145,15 @@ func NewResponseEngine(logger zerolog.Logger, bus *EventBus, pipeline *AlertPipe
 	re.executors[ActionWebhook] = &WebhookExecutor{Dispatcher: re.Dispatcher}
 	re.executors[ActionCommand] = &CommandExecutor{}
 	re.executors[ActionLog] = &LogOnlyExecutor{}
+	if cfg.Audit.Enabled {
+		var audit *AuditService
+		if len(audits) > 0 {
+			audit = audits[0]
+		}
+		for action, executor := range re.executors {
+			re.executors[action] = &auditedExecutor{inner: executor, audit: audit}
+		}
+	}
 
 	// Load policies from config
 	re.loadPolicies()
@@ -199,7 +208,9 @@ func NewResponseEngine(logger zerolog.Logger, bus *EventBus, pipeline *AlertPipe
 				return
 			}
 			start := time.Now()
-			target, details, err := executor.Execute(re.ctx, pa.Alert, pa.Rule, re.logger)
+			execCtx := context.WithValue(re.ctx, auditActorKey{}, pa.DecidedBy)
+			execCtx = context.WithValue(execCtx, auditAuthorityKey{}, pa.DecisionAuthorized)
+			target, details, err := executor.Execute(execCtx, pa.Alert, pa.Rule, re.logger)
 			durationMs := time.Since(start).Milliseconds()
 			if target != "" {
 				pa.Target = target

@@ -175,7 +175,7 @@ func suggest(input string) string {
 	cmds := []string{"up", "status", "alerts", "scan", "modules", "config",
 		"check", "stop", "docker", "init", "logs", "events", "completions",
 		"version", "help", "export", "profile", "dashboard", "correlator",
-		"threats", "rust", "enforce", "collect", "archive", "setup", "doctor"}
+		"threats", "rust", "enforce", "collect", "archive", "audit-collector", "setup", "doctor"}
 	input = strings.ToLower(input)
 	for _, c := range cmds {
 		if strings.HasPrefix(c, input) || strings.HasPrefix(input, c) {

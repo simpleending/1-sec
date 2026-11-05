@@ -6,7 +6,7 @@
     ['Approvals', 'enforce/approvals/pending'], ['Approval history', 'enforce/approvals/history?limit=100'],
     ['Approval settings', 'enforce/config'], ['Correlations', 'correlator'], ['Threats', 'threats'],
     ['Collectors / metrics', 'metrics'], ['Rust engine', 'rust'], ['Archive', 'archive/status'],
-    ['Escalation', 'escalation/status'], ['Webhooks', 'enforce/webhooks/stats'],
+    ['Durable audit', 'audit/status'], ['Escalation', 'escalation/status'], ['Webhooks', 'enforce/webhooks/stats'],
     ['Dead letters', 'enforce/webhooks/dead-letters'], ['Token vault', 'token-vault/status'], ['Configuration', 'config'], ['Logs', 'logs?limit=100'],
   ];
   const $ = id => document.getElementById(id);
@@ -68,7 +68,8 @@
     if (active[1] === 'enforce/policies' && snapshot.policies) rows = Object.entries(snapshot.policies).map(([module, policy]) => ({ module, ...policy }));
     if (!rows || active[1] === 'status') {
       const cards = element('div'); cards.className = 'cards';
-      for (const [name, value] of Object.entries(snapshot)) if (value === null || typeof value !== 'object') {
+      const metrics = active[1] === 'audit/status' && snapshot.exporter ? { enabled: snapshot.enabled, ...snapshot.exporter } : snapshot;
+      for (const [name, value] of Object.entries(metrics)) if (value === null || typeof value !== 'object') {
         const card = element('div'); card.className = 'metric'; card.append(element('span', name.replaceAll('_', ' ')), element('strong', value ?? '—')); cards.append(card);
       }
       content.append(cards); if (!rows) return;

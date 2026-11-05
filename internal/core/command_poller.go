@@ -81,6 +81,10 @@ func NewCommandPoller(engine *Engine) *CommandPoller {
 
 // Start begins the polling loop.
 func (cp *CommandPoller) Start() {
+	if cp.cfg.Audit.Enabled {
+		cp.logger.Info().Msg("legacy cloud commands disabled by durable audit")
+		return
+	}
 	if cp.cfg.Operators.RequireNamed {
 		cp.logger.Info().Msg("cloud command polling disabled by named operator enforcement")
 		return
@@ -273,6 +277,9 @@ func (cp *CommandPoller) ackCommand(cmdID, status, result, errMsg string, claimT
 }
 
 func (cp *CommandPoller) executeCommand(cmd CloudCommand) (string, error) {
+	if cp.cfg.Audit.Enabled {
+		return "", fmt.Errorf("legacy cloud commands cannot bypass durable audit")
+	}
 	if cp.cfg.Operators.RequireNamed {
 		return "", fmt.Errorf("cloud commands cannot bypass named operator enforcement")
 	}

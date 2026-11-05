@@ -16,7 +16,7 @@ import (
 )
 
 var (
-	version   = "0.4.31"
+	version   = "0.4.32"
 	commit    = "dev"
 	buildDate = "unknown"
 )
@@ -48,7 +48,9 @@ func main() {
 	// Check for updates on operational commands only. Read-only version/help
 	// invocations must not replace the running binary as a side effect.
 	quiet := hasFlag(os.Args, "-q", "--quiet")
-	selfUpdate(version, quiet)
+	if os.Args[1] != "audit-collector" {
+		selfUpdate(version, quiet)
+	}
 
 	subcmd := os.Args[1]
 	args := os.Args[2:]
@@ -109,6 +111,8 @@ func main() {
 		cmdCollect(args)
 	case "archive":
 		cmdArchive(args)
+	case "audit-collector":
+		cmdAuditCollector(args)
 	case "setup":
 		cmdSetup(args)
 	case "doctor":

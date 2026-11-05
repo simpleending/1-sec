@@ -40,6 +40,24 @@ operators:
   # Default: bus.data_dir/operator-identity. Preserve current state on recovery.
   # state_dir: "/var/lib/1sec/operator-identity"
 
+audit:
+  enabled: false
+  # A unique source and a separately operated HTTPS collector are required.
+  source_id: ""
+  endpoint: ""
+  # Use ONESEC_AUDIT_TOKEN or a private auth_token value, never a management key.
+  require_remote_ack: true
+  max_bytes: 134217728
+  # dir defaults to bus.data_dir/audit; ca_file optionally trusts a private CA.
+
+audit_receiver:
+  enabled: false
+  dir: "./data/audit-collector"
+  max_bytes: 134217728
+  # Run '1sec audit-collector --config collector.yaml' on a separate host.
+  # Configure server.tls_cert/tls_key and distinct per-source random credentials.
+  sources: []
+
 sensors:
   enabled: false
   # Set true after enrolling producers to reject shared-key HTTP event ingestion.

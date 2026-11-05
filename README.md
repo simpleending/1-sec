@@ -33,7 +33,7 @@
 
 Security intelligence reviews include verified code changes and regression checks. See the [October 13 implementation notes](docs/security-updates/2026-10-13.md) for SAML structure detection, agent identity checks, and exfiltration hardening.
 
-The [v0.4.31 release](https://github.com/simpleending/1-sec/releases/tag/v0.4.31) adds named operator credentials and six explicit roles, durable rotation/revocation, current-authority checks at credential issuance and approval dispatch, and permission-aware local dashboard controls. Enable and migrate before requiring named access. It includes v0.4.30's runtime attribution, evidence delivery, sensor identity and authenticated HTTP fixes. Upgrade both installed binaries together. The [release notes](docs/security-updates/2026-11-05-v0.4.31.md) describe setup, permissions and remaining limits; no enterprise/government certification is claimed.
+The current release is [v0.4.32](https://github.com/simpleending/1-sec/releases/tag/v0.4.32): durable off-host audit delivery, a dedicated HTTPS collector, permission rechecks after audit waits, bounded failure handling and secret-minimized evidence. Configure a separate collector and persistent storage before relying on remote receipts. See the [deployment, recovery and tested limits](docs/security-updates/2026-11-05-v0.4.32.md).
 
 The [sensor identity follow-up](docs/security-updates/2026-11-05-sensor-identity.md) adds individual ingest-only credentials, explicit host/event grants, durable rotation/revocation and checks on queued containment. Enrollment is opt-in; remote sensor observations do not authorize local OS actions. Existing broker and operator credentials remain privileged.
 

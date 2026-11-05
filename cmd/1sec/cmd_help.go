@@ -348,6 +348,12 @@ func cmdHelp(subcmd string) {
 		fmt.Printf("  1sec collect pfsense --log-path /var/log/filterlog.log\n")
 		fmt.Printf("  1sec collect json --log-path /var/log/cloudtrail.json\n")
 		fmt.Printf("  1sec collect github --log-path myorg/myrepo\n")
+	case "audit-collector":
+		fmt.Printf("%s\n\n", bold("1sec audit-collector"))
+		fmt.Printf("Run a dedicated HTTPS audit receiver without starting detectors or response actions.\n")
+		fmt.Printf("Requires audit_receiver.enabled, private per-source credentials and server.tls_cert/tls_key.\n\n")
+		fmt.Printf("  1sec audit-collector --config /etc/1sec/collector.yaml\n")
+		fmt.Printf("Protect collector storage and retention independently from producer hosts.\n")
 	case "archive":
 		fmt.Printf("%s\n\n", bold("1sec archive"))
 		fmt.Printf("Manage the cold archive — compressed NDJSON files for indefinite\n")
