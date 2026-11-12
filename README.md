@@ -33,7 +33,7 @@
 
 Security intelligence reviews include verified code changes and regression checks. See the [October 13 implementation notes](docs/security-updates/2026-10-13.md) for SAML structure detection, agent identity checks, and exfiltration hardening.
 
-The current release is [v0.4.32](https://github.com/simpleending/1-sec/releases/tag/v0.4.32): durable off-host audit delivery, a dedicated HTTPS collector, permission rechecks after audit waits, bounded failure handling and secret-minimized evidence. Configure a separate collector and persistent storage before relying on remote receipts. See the [deployment, recovery and tested limits](docs/security-updates/2026-11-05-v0.4.32.md).
+The current release is [v0.4.33](https://github.com/simpleending/1-sec/releases/tag/v0.4.33). It adds in-process log collection, more reliable startup and shutdown, and patches for Go and the broker's compression library. See the [upgrade notes](docs/security-updates/2026-11-12-v0.4.33.md) and the [durable audit deployment guide](docs/security-updates/2026-11-05-v0.4.32.md).
 
 The [sensor identity follow-up](docs/security-updates/2026-11-05-sensor-identity.md) adds individual ingest-only credentials, explicit host/event grants, durable rotation/revocation and checks on queued containment. Enrollment is opt-in; remote sensor observations do not authorize local OS actions. Existing broker and operator credentials remain privileged.
 
@@ -51,7 +51,7 @@ The [October 14 management-access update](docs/security-updates/2026-10-14.md) a
 # Install
 curl -fsSL https://1-sec.dev/get | sh
 # Production installs should pin a release:
-# curl -fsSL https://1-sec.dev/get | sh -s -- --version v0.4.29
+# curl -fsSL https://1-sec.dev/get | sh -s -- --version v0.4.33
 
 # Guided setup (config + AI keys + API auth)
 1sec setup

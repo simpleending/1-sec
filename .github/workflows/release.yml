@@ -272,6 +272,27 @@ jobs:
               --certificate-oidc-issuer https://token.actions.githubusercontent.com "$manifest"
             sha256sum --check "$manifest"
           done
+          python3 - <<'PY'
+          import os
+          import tarfile
+          import zipfile
+
+          version = os.environ['RELEASE_TAG'].removeprefix('v')
+          documents = {'LICENSE', 'README.md', 'configs/default.yaml', 'install.sh'}
+          for system in ('linux', 'darwin', 'windows'):
+              for arch in ('amd64', 'arm64'):
+                  prefix = f'1sec_{version}_{system}_{arch}'
+                  if system == 'windows':
+                      with zipfile.ZipFile(prefix + '.zip') as archive:
+                          files = [entry.filename for entry in archive.infolist() if not entry.is_dir()]
+                      binary = '1sec.exe'
+                  else:
+                      with tarfile.open(prefix + '.tar.gz') as archive:
+                          files = [entry.name for entry in archive.getmembers() if not entry.isdir()]
+                      binary = '1sec'
+                  if sorted(files) != sorted(documents | {binary}):
+                      raise SystemExit(f'{prefix} must contain one 1-SEC binary and its support files: {files}')
+          PY
           tar -xzf "1sec_${RELEASE_TAG#v}_linux_amd64.tar.gz" 1sec
           ./1sec --version | grep -F "$RELEASE_TAG"
           notes=("$GITHUB_WORKSPACE"/docs/security-updates/*-"$RELEASE_TAG".md)
