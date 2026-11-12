@@ -295,6 +295,15 @@ jobs:
           PY
           tar -xzf "1sec_${RELEASE_TAG#v}_linux_amd64.tar.gz" 1sec
           ./1sec --version | grep -F "$RELEASE_TAG"
+          python3 "$GITHUB_WORKSPACE/.github/package-sidecar-bundles.py" "$RELEASE_TAG" . ../sidecar-bundles
+          cd ../sidecar-bundles
+          manifest=sidecar-bundle-checksums.txt
+          sha256sum --check "$manifest"
+          cosign sign-blob --yes --bundle "$manifest.sigstore.json" "$manifest"
+          cosign verify-blob --bundle "$manifest.sigstore.json" \
+            --certificate-identity "https://github.com/$GITHUB_WORKFLOW_REF" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com "$manifest"
+          gh release upload "$RELEASE_TAG" 1sec-with-rust_* "$manifest" "$manifest.sigstore.json"
           notes=("$GITHUB_WORKSPACE"/docs/security-updates/*-"$RELEASE_TAG".md)
           test "${#notes[@]}" -eq 1 && test -f "${notes[0]}"
           gh release edit "$RELEASE_TAG" --title "$RELEASE_TAG" \

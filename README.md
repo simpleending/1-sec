@@ -312,6 +312,8 @@ curl -fsSL https://1-sec.dev/get | sh
 
 The binary runs the event bus, API, dashboard, and configured file collectors in one process. Use `collectors.sources` to connect local logs. Regular CLI commands skip the release lookup. Run `1sec check --updates` when you want to check GitHub. [Connect existing logs](docs/connect-your-systems.md#connect-existing-logs-or-write-a-collector)
 
+For a single download with Rust pattern scanning enabled, choose a `1sec-with-rust` archive for your platform. It contains both executables and a ready-to-use configuration. [Run and verify the Rust bundle](docs/sidecar-bundles.md)
+
 ### Docker Compose
 
 ```bash
