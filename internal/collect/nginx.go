@@ -13,9 +13,9 @@ import (
 // NginxCollector tails nginx/apache combined access logs and emits
 // http_request canonical events.
 type NginxCollector struct {
-	path   string
-	tag    string
-	cancel context.CancelFunc
+	path string
+	tag  string
+	stop func()
 }
 
 // nginx combined log format:
@@ -34,9 +34,7 @@ func NewNginxCollector(path, tag string) *NginxCollector {
 func (c *NginxCollector) Name() string { return "nginx:" + c.path }
 
 func (c *NginxCollector) Start(ctx context.Context, bus *core.EventBus, logger zerolog.Logger) error {
-	ctx, c.cancel = context.WithCancel(ctx)
-
-	return tailFile(ctx, c.path, func(line string) {
+	stop, err := tailFile(ctx, c.path, func(line string) {
 		m := nginxLogRe.FindStringSubmatch(line)
 		if m == nil {
 			return
@@ -93,7 +91,7 @@ func (c *NginxCollector) Start(ctx context.Context, bus *core.EventBus, logger z
 			respEvent.Details["status_code"] = statusStr
 			respEvent.Details["response_size"] = sizeStr
 			respEvent.Details["path"] = path
-			_ = bus.PublishEvent(respEvent)
+			publishCollectedEvent(bus, respEvent, logger)
 		}
 
 		// Detect suspicious paths
@@ -106,14 +104,16 @@ func (c *NginxCollector) Start(ctx context.Context, bus *core.EventBus, logger z
 			}
 		}
 
-		_ = bus.PublishEvent(event)
+		publishCollectedEvent(bus, event, logger)
 		_ = size // used above
 	}, logger)
+	c.stop = stop
+	return err
 }
 
 func (c *NginxCollector) Stop() error {
-	if c.cancel != nil {
-		c.cancel()
+	if c.stop != nil {
+		c.stop()
 	}
 	return nil
 }

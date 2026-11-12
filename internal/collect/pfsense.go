@@ -18,9 +18,9 @@ import (
 // TCP: ...src-port,dst-port,data-length,flags,seq,ack,window,urg,options
 // UDP: ...src-port,dst-port,data-length
 type PfSenseCollector struct {
-	path   string
-	tag    string
-	cancel context.CancelFunc
+	path string
+	tag  string
+	stop func()
 }
 
 func NewPfSenseCollector(path, tag string) *PfSenseCollector {
@@ -33,13 +33,13 @@ func NewPfSenseCollector(path, tag string) *PfSenseCollector {
 func (c *PfSenseCollector) Name() string { return "pfsense:" + c.path }
 
 func (c *PfSenseCollector) Start(ctx context.Context, bus *core.EventBus, logger zerolog.Logger) error {
-	ctx, c.cancel = context.WithCancel(ctx)
-
-	return tailFile(ctx, c.path, func(line string) {
+	stop, err := tailFile(ctx, c.path, func(line string) {
 		if event := c.parseLine(line); event != nil {
-			_ = bus.PublishEvent(event)
+			publishCollectedEvent(bus, event, logger)
 		}
 	}, logger)
+	c.stop = stop
+	return err
 }
 
 func (c *PfSenseCollector) parseLine(line string) *core.SecurityEvent {
@@ -120,8 +120,8 @@ func (c *PfSenseCollector) parseLine(line string) *core.SecurityEvent {
 }
 
 func (c *PfSenseCollector) Stop() error {
-	if c.cancel != nil {
-		c.cancel()
+	if c.stop != nil {
+		c.stop()
 	}
 	return nil
 }

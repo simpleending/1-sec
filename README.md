@@ -310,6 +310,8 @@ curl -fsSL https://1-sec.dev/get | sh
 1sec up
 ```
 
+The binary runs the event bus, API, dashboard, and configured file collectors in one process. Use `collectors.sources` to connect local logs. Regular CLI commands skip the release lookup. Run `1sec check --updates` when you want to check GitHub. [Connect existing logs](docs/connect-your-systems.md#connect-existing-logs-or-write-a-collector)
+
 ### Docker Compose
 
 ```bash

@@ -53,78 +53,67 @@ func cmdCollect(args []string) {
 		errorf("loading config: %v", err)
 	}
 
+	sources := cfg.Collectors
+	if collectorType == "all" {
+		if !sources.Enabled {
+			errorf("collectors.enabled is false in %s", *configPath)
+		}
+		if *logPath != "" || *tag != "" {
+			errorf("configure log paths and tags under collectors.sources for collect all")
+		}
+	} else {
+		if *logPath == "" && (collectorType == "auth" || collectorType == "authlog") {
+			*logPath = "/var/log/auth.log"
+		}
+		sources = core.CollectorsConfig{
+			Enabled: true,
+			Sources: []core.CollectorConfig{{Type: collectorType, LogPath: *logPath, Tag: *tag}},
+		}
+	}
+	if err := sources.Validate(); err != nil {
+		errorf("%v", err)
+	}
+
 	if *natsURL != "" {
 		cfg.Bus.URL = *natsURL
 		cfg.Bus.Embedded = false
 	}
-	if cfg.Bus.Embedded && collectorType != "all" {
+	if cfg.Bus.Embedded {
 		cfg.Bus.Token, err = core.ReadEmbeddedBusToken(cfg.Bus.DataDir)
 		if err != nil {
 			errorf("%v", err)
 		}
 		cfg.Bus.URL = fmt.Sprintf("nats://127.0.0.1:%d", cfg.Bus.Port)
-	}
-
-	// For single collector mode, connect to existing NATS (don't start embedded)
-	if collectorType != "all" {
 		cfg.Bus.Embedded = false
 	}
 
+	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	err = runCollectors(ctx, cfg, sources)
+	stopSignals()
+	if err != nil {
+		errorf("%v", err)
+	}
+	fmt.Fprintf(os.Stderr, "%s Collectors stopped.\n", green("✓"))
+}
+
+func runCollectors(ctx context.Context, cfg *core.Config, sources core.CollectorsConfig) error {
 	logger := core.NewCollectorLogger(cfg.Logging.Format, cfg.LogLevel())
 
 	bus, err := core.NewEventBus(&cfg.Bus, logger)
 	if err != nil {
-		errorf("connecting to event bus: %v\n  Make sure 1SEC engine is running (1sec up)", err)
+		return fmt.Errorf("connecting to event bus: %w\n  Make sure 1SEC engine is running (1sec up)", err)
 	}
 	defer bus.Close()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
 	mgr := collect.NewManager(logger)
-
-	if collectorType == "all" {
-		// Start all collectors from config — not yet wired, placeholder
-		fmt.Fprintf(os.Stderr, "%s Starting all configured collectors...\n", dim("▸"))
-		// TODO: read collectors config from yaml when added
-		fmt.Fprintf(os.Stderr, "%s No collectors configured in config file yet. Use individual collector commands.\n", yellow("⚠"))
-		return
+	if err := mgr.StartAll(ctx, sources, bus); err != nil {
+		return err
 	}
+	defer mgr.StopAll()
 
-	if *logPath == "" {
-		switch collectorType {
-		case "auth":
-			*logPath = "/var/log/auth.log"
-		case "github":
-			errorf("--log-path is required for github collector (use owner/repo format)")
-		default:
-			errorf("--log-path is required for %s collector", collectorType)
-		}
-	}
-
-	cc := collect.CollectorConfig{
-		Type:    collectorType,
-		LogPath: *logPath,
-		Tag:     *tag,
-	}
-
-	err = mgr.StartAll(ctx, collect.CollectorsConfig{
-		Enabled:    true,
-		Collectors: []collect.CollectorConfig{cc},
-	}, bus)
-	if err != nil {
-		errorf("starting collector: %v", err)
-	}
-
-	fmt.Fprintf(os.Stderr, "%s Collector %s tailing %s — events publishing to NATS\n",
-		green("✓"), collectorType, *logPath)
+	fmt.Fprintf(os.Stderr, "%s %d collector(s) connected to 1SEC\n", green("✓"), mgr.Count())
 	fmt.Fprintf(os.Stderr, "%s Press Ctrl+C to stop\n", dim("▸"))
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	<-sigCh
-
-	fmt.Fprintf(os.Stderr, "\n%s Stopping collector...\n", dim("▸"))
-	mgr.StopAll()
-	fmt.Fprintf(os.Stderr, "%s Collector stopped.\n", green("✓"))
+	<-ctx.Done()
+	return nil
 }

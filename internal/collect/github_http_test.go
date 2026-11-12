@@ -5,6 +5,9 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/1sec-project/1sec/internal/core"
+	"github.com/rs/zerolog"
 )
 
 type githubResponseTransport func(*http.Request) (*http.Response, error)
@@ -31,7 +34,7 @@ func TestGitHubResponseBoundary(t *testing.T) {
 				}
 				return &http.Response{StatusCode: tc.status, Body: io.NopCloser(strings.NewReader(tc.body)), Header: make(http.Header), Request: req}, nil
 			})
-			runs, err := c.fetchWorkflowRuns()
+			runs, err := c.fetchWorkflowRuns(t.Context())
 			if (err == nil) != tc.valid {
 				t.Fatalf("unexpected result: %v", err)
 			}
@@ -59,10 +62,30 @@ func TestGitHubRedirectBoundary(t *testing.T) {
 			}
 			return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(body)), Header: header, Request: req}, nil
 		})
-		_, err := c.fetchWorkflowRuns()
+		_, err := c.fetchWorkflowRuns(t.Context())
 		allowed := target == "https://api.github.com/repos/new/runs"
 		if (err == nil) != allowed || (!allowed && calls != 1) {
 			t.Fatalf("redirect %s: calls=%d err=%v", target, calls, err)
 		}
+	}
+}
+
+func TestGitHubPollProcessesNewestFirstResponseWithoutSkipping(t *testing.T) {
+	cfg := &core.BusConfig{Embedded: true, Port: -1, DataDir: t.TempDir()}
+	bus, err := core.NewEventBus(cfg, zerolog.Nop())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bus.Close()
+
+	c := NewGitHubCollector("owner/repo", "")
+	c.httpClient.Transport = githubResponseTransport(func(req *http.Request) (*http.Response, error) {
+		body := `{"workflow_runs":[{"id":43},{"id":42}]}`
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header), Request: req}, nil
+	})
+	c.poll(t.Context(), bus, zerolog.Nop())
+	c.poll(t.Context(), bus, zerolog.Nop())
+	if count := bus.GetMetrics()["events_published"]; count != 2 || c.lastSeen != 43 {
+		t.Fatalf("published %d events with cursor %d", count, c.lastSeen)
 	}
 }

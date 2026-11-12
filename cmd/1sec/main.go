@@ -45,13 +45,6 @@ func main() {
 		os.Exit(0)
 	}
 
-	// Check for updates on operational commands only. Read-only version/help
-	// invocations must not replace the running binary as a side effect.
-	quiet := hasFlag(os.Args, "-q", "--quiet")
-	if os.Args[1] != "audit-collector" {
-		selfUpdate(version, quiet)
-	}
-
 	subcmd := os.Args[1]
 	args := os.Args[2:]
 

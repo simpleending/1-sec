@@ -95,7 +95,21 @@ Create a fresh ID/timestamp for each independent observation. If retrying a deli
 
 ## Connect existing logs or write a collector
 
-Start the engine first, then run a collector on the same machine with the same config/data directory and an account allowed to read its private bus credential:
+To run file collectors inside the engine, add them to the YAML used by `1sec up --config /path/to/1sec.yaml`:
+
+```yaml
+collectors:
+  enabled: true
+  sources:
+    - type: nginx
+      log_path: /var/log/nginx/access.log
+    - type: auth
+      log_path: /var/log/auth.log
+```
+
+The engine tails new records from the configured files. Supported types are `nginx`, `auth` (`authlog`), `pfsense`, `json` (`jsonlog`), and the optional `github` collector. The GitHub collector requires a repository in `log_path`, an Actions read token in `GITHUB_TOKEN`, and network access. File sources must exist and be readable when the engine starts.
+
+You can also start the engine first and run a collector on the same machine. Give that process the same bus configuration and permission to read the private bus credential:
 
 ```bash
 1sec collect nginx --log-path /var/log/nginx/access.log
@@ -103,7 +117,7 @@ Start the engine first, then run a collector on the same machine with the same c
 # Or: 1sec collect json --log-path /var/log/cloudtrail.json
 ```
 
-These local collectors use the event bus, not the purchased dashboard key or the local HTTP key. An explicit external `--nats-url` needs that broker's own protected credential configuration. See [collector instructions](https://1-sec.dev/collectors).
+These collectors authenticate with the private event-bus credential. For a separate process with multiple sources, use `1sec collect all --config /path/to/collectors.yaml` and list only sources the engine is not already tailing. An explicit external `--nats-url` needs that broker's own protected credentials. [Collector instructions](https://1-sec.dev/collectors)
 
 For custom code, adapt records to the canonical event schema and submit them through HTTP. Developers extending this repository can implement `internal/collect.Collector` for a log adapter or `internal/core.Module` for detection logic. A collector supplies telemetry; a module analyzes supported event types.
 

@@ -18,6 +18,7 @@ type Config struct {
 	Bus              BusConfig               `yaml:"bus"`
 	Alerts           AlertConfig             `yaml:"alerts"`
 	Syslog           SyslogConfig            `yaml:"syslog"`
+	Collectors       CollectorsConfig        `yaml:"collectors,omitempty"`
 	Modules          map[string]ModuleConfig `yaml:"modules"`
 	Logging          LoggingConfig           `yaml:"logging"`
 	RustEngine       RustEngineConfig        `yaml:"rust_engine"`
@@ -121,6 +122,38 @@ type SyslogConfig struct {
 	Protocol           string `yaml:"protocol"` // "udp", "tcp", or "both"
 	Host               string `yaml:"host"`
 	Port               int    `yaml:"port"`
+}
+
+// CollectorsConfig controls the reference collectors running with the engine.
+type CollectorsConfig struct {
+	Enabled bool              `yaml:"enabled"`
+	Sources []CollectorConfig `yaml:"sources"`
+}
+
+type CollectorConfig struct {
+	Type    string `yaml:"type"`
+	LogPath string `yaml:"log_path"`
+	Tag     string `yaml:"tag,omitempty"`
+}
+
+func (c CollectorsConfig) Validate() error {
+	if !c.Enabled {
+		return nil
+	}
+	if len(c.Sources) == 0 {
+		return fmt.Errorf("collectors.enabled requires at least one source")
+	}
+	for i, source := range c.Sources {
+		switch source.Type {
+		case "nginx", "auth", "authlog", "pfsense", "json", "jsonlog", "github":
+		default:
+			return fmt.Errorf("collectors.sources[%d].type %q is unknown", i, source.Type)
+		}
+		if strings.TrimSpace(source.LogPath) == "" {
+			return fmt.Errorf("collectors.sources[%d].log_path is required", i)
+		}
+	}
+	return nil
 }
 
 // BusConfig holds NATS event bus settings.
@@ -461,6 +494,9 @@ func (c *Config) ValidateAPIKey(key string) string {
 // Validate checks the configuration for common errors and returns a list of
 // warnings and a list of errors. Errors are fatal; warnings are informational.
 func (c *Config) Validate() (warnings []string, errs []string) {
+	if err := c.Collectors.Validate(); err != nil {
+		errs = append(errs, err.Error())
+	}
 	if err := validateAuditConfig(c); err != nil {
 		errs = append(errs, err.Error())
 	}
@@ -476,6 +512,9 @@ func (c *Config) Validate() (warnings []string, errs []string) {
 	}
 
 	// TLS files
+	if (c.Server.TLSCert == "") != (c.Server.TLSKey == "") {
+		errs = append(errs, "server.tls_cert and server.tls_key must be set together")
+	}
 	if c.TLSEnabled() {
 		if _, err := os.Stat(c.Server.TLSCert); err != nil {
 			errs = append(errs, fmt.Sprintf("tls_cert file not found: %s", c.Server.TLSCert))

@@ -27,7 +27,7 @@ server:
     - "https://www.1-sec.dev"
   # TLS — enable HTTPS on the API server.
   # Provide paths to a PEM-encoded certificate and private key.
-  # When configured, the API server uses ListenAndServeTLS.
+  # Configure both paths to enable TLS.
   # tls_cert: "/etc/1sec/tls/server.crt"
   # tls_key:  "/etc/1sec/tls/server.key"
 
@@ -88,6 +88,15 @@ syslog:
   read_timeout_seconds: 30      # Complete a syslog line within this deadline
   host: "0.0.0.0"
   port: 1514
+
+# File collectors can run inside '1sec up' using the engine's embedded bus.
+collectors:
+  enabled: false
+  sources: []
+  # sources:
+  #   - type: nginx
+  #     log_path: "/var/log/nginx/access.log"
+  #     tag: "nginx"
 
 logging:
   level: "info"       # debug, info, warn, error

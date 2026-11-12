@@ -32,7 +32,7 @@ func cmdStop(args []string) {
 	base := apiBase(*configPath, envHost(*host), envPort(*port))
 	apiKey := resolveAPIKey(*apiKeyFlag, *configPath)
 
-	_, err = apiGet(base+"/health", apiKey, timeout)
+	_, err = apiGet(base+"/live", apiKey, timeout)
 	if err != nil {
 		errorf("cannot reach 1SEC instance at %s — is it running?", base)
 	}

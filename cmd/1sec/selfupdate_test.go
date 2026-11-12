@@ -11,10 +11,6 @@ type releaseTransport func(*http.Request) (*http.Response, error)
 
 func (f releaseTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 func TestUpdateCheckDoesNotDownloadOrReplaceCode(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("HOME", dir)
-	t.Setenv("USERPROFILE", dir)
-	t.Setenv(updateEnvDisable, "")
 	old := http.DefaultTransport
 	t.Cleanup(func() { http.DefaultTransport = old })
 	calls := 0
@@ -25,8 +21,9 @@ func TestUpdateCheckDoesNotDownloadOrReplaceCode(t *testing.T) {
 		}
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"tag_name":"v999.0.0","assets":[{"name":"binary","browser_download_url":"https://malicious.example/binary"}]}`)), Header: make(http.Header)}, nil
 	})
-	if selfUpdate("0.0.1", true) {
-		t.Fatal("unexpected binary replacement")
+	release, err := fetchLatestRelease()
+	if err != nil || release.TagName != "v999.0.0" {
+		t.Fatalf("unexpected release metadata: %v, %v", release, err)
 	}
 	if calls != 1 {
 		t.Fatal(calls)
@@ -52,15 +49,5 @@ func TestIsNewer(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("isNewer(%q, %q) = %v, want %v", tt.latest, tt.current, got, tt.want)
 		}
-	}
-}
-
-func TestHasFlag(t *testing.T) {
-	args := []string{"up", "--quiet", "--config", "foo.yaml"}
-	if !hasFlag(args, "-q", "--quiet") {
-		t.Error("expected hasFlag to find --quiet")
-	}
-	if hasFlag(args, "-v", "--verbose") {
-		t.Error("expected hasFlag to not find --verbose")
 	}
 }

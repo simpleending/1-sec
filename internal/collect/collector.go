@@ -20,19 +20,6 @@ type Collector interface {
 	Stop() error
 }
 
-// CollectorConfig holds settings for a single collector instance.
-type CollectorConfig struct {
-	Type    string `yaml:"type"`     // "nginx", "authlog", "pfsense", "jsonlog"
-	LogPath string `yaml:"log_path"` // path to the log file to tail
-	Tag     string `yaml:"tag"`      // optional tag for source identification
-}
-
-// CollectorsConfig holds the top-level collectors configuration.
-type CollectorsConfig struct {
-	Enabled    bool              `yaml:"enabled"`
-	Collectors []CollectorConfig `yaml:"sources"`
-}
-
 // Manager manages multiple collector instances.
 type Manager struct {
 	mu         sync.Mutex
@@ -48,33 +35,34 @@ func NewManager(logger zerolog.Logger) *Manager {
 }
 
 // StartAll creates and starts collectors from config.
-func (m *Manager) StartAll(ctx context.Context, cfg CollectorsConfig, bus *core.EventBus) error {
-	for _, cc := range cfg.Collectors {
+func (m *Manager) StartAll(ctx context.Context, cfg core.CollectorsConfig, bus *core.EventBus) error {
+	if err := cfg.Validate(); err != nil || !cfg.Enabled {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	first := len(m.collectors)
+	for _, cc := range cfg.Sources {
 		var c Collector
 		switch cc.Type {
 		case "nginx":
 			c = NewNginxCollector(cc.LogPath, cc.Tag)
-		case "authlog":
+		case "auth", "authlog":
 			c = NewAuthLogCollector(cc.LogPath, cc.Tag)
 		case "pfsense":
 			c = NewPfSenseCollector(cc.LogPath, cc.Tag)
-		case "jsonlog":
+		case "json", "jsonlog":
 			c = NewJSONLogCollector(cc.LogPath, cc.Tag)
 		case "github":
 			c = NewGitHubCollector(cc.LogPath, cc.Tag)
-		default:
-			m.logger.Warn().Str("type", cc.Type).Msg("unknown collector type, skipping")
-			continue
 		}
 
 		if err := c.Start(ctx, bus, m.logger); err != nil {
-			m.logger.Error().Err(err).Str("collector", c.Name()).Msg("failed to start collector")
-			continue
+			m.stopFrom(first)
+			return fmt.Errorf("starting %s: %w", c.Name(), err)
 		}
 
-		m.mu.Lock()
 		m.collectors = append(m.collectors, c)
-		m.mu.Unlock()
 
 		m.logger.Info().Str("collector", c.Name()).Str("path", cc.LogPath).Msg("collector started")
 	}
@@ -85,12 +73,17 @@ func (m *Manager) StartAll(ctx context.Context, cfg CollectorsConfig, bus *core.
 func (m *Manager) StopAll() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for _, c := range m.collectors {
+	m.stopFrom(0)
+}
+
+func (m *Manager) stopFrom(first int) {
+	for _, c := range m.collectors[first:] {
 		if err := c.Stop(); err != nil {
 			m.logger.Error().Err(err).Str("collector", c.Name()).Msg("error stopping collector")
 		}
 	}
-	m.collectors = nil
+	clear(m.collectors[first:])
+	m.collectors = m.collectors[:first]
 }
 
 // Count returns the number of running collectors.
@@ -119,19 +112,22 @@ func (m *Manager) Status() []map[string]interface{} {
 // detecting file truncation or inode change.
 // ---------------------------------------------------------------------------
 
-func tailFile(ctx context.Context, path string, handler func(line string), logger zerolog.Logger) error {
-	f, err := os.Open(path)
+func tailFile(parent context.Context, path string, handler func(line string), logger zerolog.Logger) (stop func(), err error) {
+	f, err := openLogFile(path)
 	if err != nil {
-		return fmt.Errorf("opening %s: %w", path, err)
+		return nil, fmt.Errorf("opening %s: %w", path, err)
 	}
 
 	// Seek to end — we only want new lines
 	if _, err := f.Seek(0, io.SeekEnd); err != nil {
 		f.Close()
-		return fmt.Errorf("seeking to end of %s: %w", path, err)
+		return nil, fmt.Errorf("seeking to end of %s: %w", path, err)
 	}
 
+	ctx, cancel := context.WithCancel(parent)
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		defer func() { f.Close() }()
 		reader := bufio.NewReader(f)
 		const maxLineBytes = 1024 * 1024
@@ -167,7 +163,7 @@ func tailFile(ctx context.Context, path string, handler func(line string), logge
 						if openedErr == nil && (!os.SameFile(opened, info) || (seekErr == nil && info.Size() < offset)) {
 							// File was truncated/rotated — reopen
 							logger.Info().Str("path", path).Msg("log rotation detected, reopening")
-							newF, openErr := os.Open(path)
+							newF, openErr := openLogFile(path)
 							if openErr != nil {
 								logger.Error().Err(openErr).Str("path", path).Msg("failed to reopen after rotation")
 							} else {
@@ -180,14 +176,22 @@ func tailFile(ctx context.Context, path string, handler func(line string), logge
 							}
 						}
 					}
-					time.Sleep(250 * time.Millisecond)
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(250 * time.Millisecond):
+					}
 					continue
 				}
 				if ctx.Err() != nil {
 					return
 				}
 				logger.Error().Err(err).Str("path", path).Msg("read error")
-				time.Sleep(time.Second)
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(time.Second):
+				}
 				continue
 			}
 
@@ -199,5 +203,25 @@ func tailFile(ctx context.Context, path string, handler func(line string), logge
 		}
 	}()
 
-	return nil
+	return func() {
+		cancel()
+		<-done
+	}, nil
+}
+
+func openLogFile(path string) (*os.File, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("expected a regular log file")
+	}
+	return os.Open(path)
+}
+
+func publishCollectedEvent(bus *core.EventBus, event *core.SecurityEvent, logger zerolog.Logger) {
+	if err := bus.PublishEvent(event); err != nil {
+		logger.Error().Err(err).Str("type", event.Type).Msg("failed to publish collector event")
+	}
 }

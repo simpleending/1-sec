@@ -5,6 +5,8 @@ package main
 // ---------------------------------------------------------------------------
 
 import (
+	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -13,6 +15,7 @@ import (
 	"syscall"
 
 	"github.com/1sec-project/1sec/internal/api"
+	"github.com/1sec-project/1sec/internal/collect"
 	"github.com/1sec-project/1sec/internal/core"
 	"github.com/1sec-project/1sec/internal/ingest"
 
@@ -166,28 +169,51 @@ func cmdUp(args []string) {
 		fmt.Fprintf(os.Stderr, "%s Starting 1SEC engine...\n", dim("▸"))
 	}
 
-	srv := api.NewServer(engine)
-	if err := srv.Start(); err != nil {
-		errorf("starting API server: %v", err)
+	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	err = runEngine(ctx, engine, *quiet)
+	stopSignals()
+	if err != nil {
+		errorf("%v", err)
 	}
+	if !*quiet {
+		fmt.Fprintf(os.Stderr, "%s 1SEC stopped.\n", green("✓"))
+	}
+}
 
+func runEngine(ctx context.Context, engine *core.Engine, quiet bool) (err error) {
+	cfg := engine.Config
+	defer func() { err = errors.Join(err, engine.Shutdown()) }()
 	if err := engine.Start(); err != nil {
-		errorf("starting engine: %v", err)
+		return fmt.Errorf("starting engine: %w", err)
 	}
 
-	var syslogSrv *ingest.SyslogServer
-	if cfg.Syslog.Enabled {
-		syslogSrv = ingest.NewSyslogServer(&cfg.Syslog, engine.Bus, engine.Logger)
-		if err := syslogSrv.Start(engine.Context()); err != nil {
-			errorf("starting syslog ingestion: %v", err)
+	if cfg.Collectors.Enabled {
+		collectors := collect.NewManager(engine.Logger)
+		if err := collectors.StartAll(engine.Context(), cfg.Collectors, engine.Bus); err != nil {
+			return fmt.Errorf("starting configured collectors: %w", err)
 		}
-		if !*quiet {
+		defer collectors.StopAll()
+	}
+
+	if cfg.Syslog.Enabled {
+		syslogSrv := ingest.NewSyslogServer(&cfg.Syslog, engine.Bus, engine.Logger)
+		defer func() { err = errors.Join(err, syslogSrv.Stop()) }()
+		if err := syslogSrv.Start(engine.Context()); err != nil {
+			return fmt.Errorf("starting syslog ingestion: %w", err)
+		}
+		if !quiet {
 			fmt.Fprintf(os.Stderr, "%s Syslog ingestion on :%d (%s)\n",
 				green("✓"), cfg.Syslog.Port, cfg.Syslog.Protocol)
 		}
 	}
 
-	if !*quiet {
+	srv := api.NewServer(engine)
+	if err := srv.Start(); err != nil {
+		return fmt.Errorf("starting API server: %w", err)
+	}
+	defer func() { err = errors.Join(err, srv.Stop()) }()
+
+	if !quiet {
 		rustStatus := ""
 		if cfg.RustEngine.Enabled && engine.RustSidecar != nil && engine.RustSidecar.Running() {
 			rustStatus = fmt.Sprintf(", rust engine %s", green("active"))
@@ -214,21 +240,10 @@ func cmdUp(args []string) {
 		fmt.Fprintf(os.Stderr, "%s Press Ctrl+C to stop\n", dim("▸"))
 	}
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	sig := <-sigCh
-
-	if !*quiet {
-		fmt.Fprintf(os.Stderr, "\n%s Received %s, shutting down...\n", dim("▸"), sig)
-	}
-
-	if syslogSrv != nil {
-		syslogSrv.Stop()
-	}
-	srv.Stop()
-	engine.Shutdown()
-
-	if !*quiet {
-		fmt.Fprintf(os.Stderr, "%s 1SEC stopped.\n", green("✓"))
+	select {
+	case <-ctx.Done():
+		return nil
+	case err := <-srv.ShutdownRequested():
+		return err
 	}
 }

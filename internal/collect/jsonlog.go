@@ -12,9 +12,9 @@ import (
 // JSONLogCollector tails JSON-line log files (CloudTrail, k8s audit, etc.)
 // and emits canonical events. It auto-detects the log format from field names.
 type JSONLogCollector struct {
-	path   string
-	tag    string
-	cancel context.CancelFunc
+	path string
+	tag  string
+	stop func()
 }
 
 func NewJSONLogCollector(path, tag string) *JSONLogCollector {
@@ -27,9 +27,7 @@ func NewJSONLogCollector(path, tag string) *JSONLogCollector {
 func (c *JSONLogCollector) Name() string { return "jsonlog:" + c.path }
 
 func (c *JSONLogCollector) Start(ctx context.Context, bus *core.EventBus, logger zerolog.Logger) error {
-	ctx, c.cancel = context.WithCancel(ctx)
-
-	return tailFile(ctx, c.path, func(line string) {
+	stop, err := tailFile(ctx, c.path, func(line string) {
 		var raw map[string]interface{}
 		if err := json.Unmarshal([]byte(line), &raw); err != nil {
 			return // skip non-JSON lines
@@ -42,8 +40,10 @@ func (c *JSONLogCollector) Start(ctx context.Context, bus *core.EventBus, logger
 
 		event.Source = "collector:" + c.tag
 		event.RawData = []byte(line)
-		_ = bus.PublishEvent(event)
+		publishCollectedEvent(bus, event, logger)
 	}, logger)
+	c.stop = stop
+	return err
 }
 
 func (c *JSONLogCollector) classifyAndBuild(raw map[string]interface{}) *core.SecurityEvent {
@@ -187,8 +187,8 @@ func (c *JSONLogCollector) buildK8sAuditEvent(raw map[string]interface{}) *core.
 }
 
 func (c *JSONLogCollector) Stop() error {
-	if c.cancel != nil {
-		c.cancel()
+	if c.stop != nil {
+		c.stop()
 	}
 	return nil
 }

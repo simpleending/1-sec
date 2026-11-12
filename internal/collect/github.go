@@ -1,11 +1,13 @@
 package collect
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -31,6 +33,7 @@ type GitHubCollector struct {
 	token      string
 	interval   time.Duration
 	cancel     context.CancelFunc
+	done       chan struct{}
 	lastSeen   int64 // last workflow run ID we've processed
 	httpClient *http.Client
 }
@@ -51,16 +54,17 @@ func (c *GitHubCollector) Name() string { return "github:" + c.repo }
 
 func (c *GitHubCollector) Start(ctx context.Context, bus *core.EventBus, logger zerolog.Logger) error {
 	// Get token from environment
-	c.token = getEnv("GITHUB_TOKEN")
+	c.token = os.Getenv("GITHUB_TOKEN")
 	if c.token == "" {
 		return fmt.Errorf("GITHUB_TOKEN environment variable required for GitHub collector")
 	}
 
 	ctx, c.cancel = context.WithCancel(ctx)
+	c.done = make(chan struct{})
 
 	go func() {
-		// Initial poll
-		c.poll(bus, logger)
+		defer close(c.done)
+		c.poll(ctx, bus, logger)
 
 		ticker := time.NewTicker(c.interval)
 		defer ticker.Stop()
@@ -70,7 +74,7 @@ func (c *GitHubCollector) Start(ctx context.Context, bus *core.EventBus, logger 
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				c.poll(bus, logger)
+				c.poll(ctx, bus, logger)
 			}
 		}
 	}()
@@ -78,34 +82,41 @@ func (c *GitHubCollector) Start(ctx context.Context, bus *core.EventBus, logger 
 	return nil
 }
 
-func (c *GitHubCollector) poll(bus *core.EventBus, logger zerolog.Logger) {
-	runs, err := c.fetchWorkflowRuns()
+func (c *GitHubCollector) poll(ctx context.Context, bus *core.EventBus, logger zerolog.Logger) {
+	runs, err := c.fetchWorkflowRuns(ctx)
 	if err != nil {
-		logger.Error().Err(err).Str("repo", c.repo).Msg("failed to fetch GitHub workflow runs")
+		if ctx.Err() == nil {
+			logger.Error().Err(err).Str("repo", c.repo).Msg("failed to fetch GitHub workflow runs")
+		}
 		return
 	}
 
+	slices.SortStableFunc(runs, func(a, b map[string]interface{}) int {
+		aID, _ := a["id"].(float64)
+		bID, _ := b["id"].(float64)
+		return cmp.Compare(aID, bID)
+	})
 	for _, run := range runs {
+		if ctx.Err() != nil {
+			return
+		}
 		runID, _ := run["id"].(float64)
 		if int64(runID) <= c.lastSeen {
 			continue
 		}
 
-		event := c.buildEvent(run)
-		if event != nil {
-			_ = bus.PublishEvent(event)
+		if err := bus.PublishEvent(c.buildEvent(run)); err != nil {
+			logger.Error().Err(err).Str("repo", c.repo).Msg("failed to publish GitHub workflow run")
+			return
 		}
-
-		if int64(runID) > c.lastSeen {
-			c.lastSeen = int64(runID)
-		}
+		c.lastSeen = int64(runID)
 	}
 }
 
-func (c *GitHubCollector) fetchWorkflowRuns() ([]map[string]interface{}, error) {
+func (c *GitHubCollector) fetchWorkflowRuns(ctx context.Context) ([]map[string]interface{}, error) {
 	url := fmt.Sprintf("https://api.github.com/repos/%s/actions/runs?per_page=20", c.repo)
 
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -187,11 +198,7 @@ func (c *GitHubCollector) buildEvent(run map[string]interface{}) *core.SecurityE
 func (c *GitHubCollector) Stop() error {
 	if c.cancel != nil {
 		c.cancel()
+		<-c.done
 	}
 	return nil
-}
-
-// getEnv is a helper to read environment variables.
-func getEnv(key string) string {
-	return os.Getenv(key)
 }

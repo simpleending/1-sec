@@ -82,7 +82,7 @@ verify checksum) over any script-based method for production systems.
 
 ## Self-Update Mechanism
 
-1-SEC checks for a newer GitHub release at most once per day during normal CLI use. The check announces an installation link and never downloads or replaces executable code. Set `ONESEC_NO_UPDATE=1` to disable checks. Install upgrades with the maintained `install.sh`, which verifies the signed checksum bundle before extracting the archive. The old unsigned automatic replacement path and predictable temporary-file installer have been removed.
+Use `1sec check --updates` to request release metadata from GitHub. Regular commands skip the lookup. Set `ONESEC_NO_UPDATE=1` to disable the explicit lookup too. Install upgrades with the maintained `install.sh`, which verifies the signed checksum bundle before extracting the archive.
 
 ## Enforcement Actions & Permissions
 

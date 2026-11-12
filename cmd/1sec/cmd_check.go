@@ -20,6 +20,7 @@ func cmdCheck(args []string) {
 	configPath := fs.String("config", "configs/default.yaml", "Config file path")
 	format := fs.String("format", "table", "Output format: table, json")
 	jsonOut := fs.Bool("json", false, "Output results as JSON")
+	updates := fs.Bool("updates", false, "Check GitHub for a newer published release")
 	profileFlag := fs.String("profile", "", "Named profile to use")
 	fs.Parse(args)
 
@@ -40,6 +41,18 @@ func cmdCheck(args []string) {
 	pass := func(name, detail string) { results = append(results, checkResult{name, "pass", detail}) }
 	fail := func(name, detail string) { results = append(results, checkResult{name, "fail", detail}) }
 	warn := func(name, detail string) { results = append(results, checkResult{name, "warn", detail}) }
+
+	if *updates {
+		if os.Getenv("ONESEC_NO_UPDATE") == "1" {
+			warn("updates", "release lookup disabled by ONESEC_NO_UPDATE")
+		} else if release, err := fetchLatestRelease(); err != nil {
+			warn("updates", fmt.Sprintf("release lookup failed: %v", err))
+		} else if isNewer(release.TagName, version) {
+			warn("updates", fmt.Sprintf("release %q is available. Install from https://1-sec.dev/get", release.TagName))
+		} else {
+			pass("updates", fmt.Sprintf("latest published release is %q", release.TagName))
+		}
+	}
 
 	cfg, err := core.LoadConfig(*configPath)
 	if err != nil {

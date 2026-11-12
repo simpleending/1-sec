@@ -12,9 +12,9 @@ import (
 // AuthLogCollector tails /var/log/auth.log (or similar) and emits
 // auth_failure, auth_success, and session_activity canonical events.
 type AuthLogCollector struct {
-	path   string
-	tag    string
-	cancel context.CancelFunc
+	path string
+	tag  string
+	stop func()
 }
 
 var (
@@ -43,15 +43,13 @@ func NewAuthLogCollector(path, tag string) *AuthLogCollector {
 func (c *AuthLogCollector) Name() string { return "authlog:" + c.path }
 
 func (c *AuthLogCollector) Start(ctx context.Context, bus *core.EventBus, logger zerolog.Logger) error {
-	ctx, c.cancel = context.WithCancel(ctx)
-
-	return tailFile(ctx, c.path, func(line string) {
+	stop, err := tailFile(ctx, c.path, func(line string) {
 		if event := c.parseLine(line); event != nil {
-			if err := bus.PublishEvent(event); err != nil {
-				logger.Error().Err(err).Msg("failed to publish authentication log event")
-			}
+			publishCollectedEvent(bus, event, logger)
 		}
 	}, logger)
+	c.stop = stop
+	return err
 }
 
 func (c *AuthLogCollector) parseLine(line string) *core.SecurityEvent {
@@ -109,8 +107,8 @@ func (c *AuthLogCollector) parseLine(line string) *core.SecurityEvent {
 }
 
 func (c *AuthLogCollector) Stop() error {
-	if c.cancel != nil {
-		c.cancel()
+	if c.stop != nil {
+		c.stop()
 	}
 	return nil
 }

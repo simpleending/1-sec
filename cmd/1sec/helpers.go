@@ -153,21 +153,6 @@ func resolveAPIKey(flagKey, configPath string) string {
 }
 
 // ---------------------------------------------------------------------------
-// hasFlag checks if any of the given flags appear in args.
-// ---------------------------------------------------------------------------
-
-func hasFlag(args []string, flags ...string) bool {
-	for _, a := range args {
-		for _, f := range flags {
-			if a == f {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// ---------------------------------------------------------------------------
 // Suggest — typo correction for unknown commands
 // ---------------------------------------------------------------------------
 

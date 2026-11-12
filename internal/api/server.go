@@ -2,15 +2,16 @@ package api
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/1sec-project/1sec/internal/core"
@@ -22,16 +23,19 @@ import (
 
 // Server is the 1SEC REST API server.
 type Server struct {
-	engine *core.Engine
-	server *http.Server
-	logger zerolog.Logger
+	engine            *core.Engine
+	server            *http.Server
+	logger            zerolog.Logger
+	shutdownRequested chan error
+	shutdownOnce      sync.Once
 }
 
 // NewServer creates a new API server.
 func NewServer(engine *core.Engine) *Server {
 	s := &Server{
-		engine: engine,
-		logger: engine.Logger.With().Str("component", "api_server").Logger(),
+		engine:            engine,
+		logger:            engine.Logger.With().Str("component", "api_server").Logger(),
+		shutdownRequested: make(chan error, 1),
 	}
 
 	mux := http.NewServeMux()
@@ -99,7 +103,7 @@ func NewServer(engine *core.Engine) *Server {
 	)
 
 	s.server = &http.Server{
-		Addr:         fmt.Sprintf("%s:%d", engine.Config.Server.Host, engine.Config.Server.Port),
+		Addr:         net.JoinHostPort(strings.Trim(engine.Config.Server.Host, "[]"), strconv.Itoa(engine.Config.Server.Port)),
 		Handler:      handler,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
@@ -124,33 +128,40 @@ func (s *Server) Start() error {
 	} else {
 		s.logger.Warn().Msg("API has no keys and is bound to a non-loopback host - only /health is accessible until api_keys/read_only_keys are configured or allow_unauthenticated_read is enabled")
 	}
-	if s.engine.Config.TLSEnabled() {
-		// Validate TLS files exist and are readable before starting
-		if _, err := os.Stat(s.engine.Config.Server.TLSCert); err != nil {
-			return fmt.Errorf("TLS certificate file not found: %w", err)
+	tlsEnabled := s.engine.Config.Server.TLSCert != "" || s.engine.Config.Server.TLSKey != ""
+	if tlsEnabled {
+		cert, err := tls.LoadX509KeyPair(s.engine.Config.Server.TLSCert, s.engine.Config.Server.TLSKey)
+		if err != nil {
+			return fmt.Errorf("loading API TLS key pair: %w", err)
 		}
-		if _, err := os.Stat(s.engine.Config.Server.TLSKey); err != nil {
-			return fmt.Errorf("TLS key file not found: %w", err)
-		}
-		s.logger.Info().
-			Str("cert", s.engine.Config.Server.TLSCert).
-			Msg("API server starting with TLS")
-		go func() {
-			if err := s.server.ListenAndServeTLS(
-				s.engine.Config.Server.TLSCert,
-				s.engine.Config.Server.TLSKey,
-			); err != nil && err != http.ErrServerClosed {
-				s.logger.Error().Err(err).Msg("API server TLS error")
-			}
-		}()
-	} else {
-		go func() {
-			if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				s.logger.Error().Err(err).Msg("API server error")
-			}
-		}()
+		s.server.TLSConfig = &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
 	}
+	listener, err := net.Listen("tcp", s.server.Addr)
+	if err != nil {
+		return fmt.Errorf("listening for API requests: %w", err)
+	}
+	go func() {
+		var serveErr error
+		if tlsEnabled {
+			serveErr = s.server.ServeTLS(listener, "", "")
+		} else {
+			serveErr = s.server.Serve(listener)
+		}
+		if serveErr != http.ErrServerClosed {
+			s.requestShutdown(fmt.Errorf("serving API requests: %w", serveErr))
+		}
+	}()
 	return nil
+}
+
+// ShutdownRequested reports an authorized stop or an API serving error.
+func (s *Server) ShutdownRequested() <-chan error { return s.shutdownRequested }
+
+func (s *Server) requestShutdown(err error) {
+	s.shutdownOnce.Do(func() {
+		s.shutdownRequested <- err
+		close(s.shutdownRequested)
+	})
 }
 
 // Stop gracefully shuts down the API server.
@@ -480,21 +491,8 @@ func (s *Server) handleShutdown(w http.ResponseWriter, r *http.Request) {
 		"status":  "shutting_down",
 		"message": "1SEC engine is shutting down gracefully",
 	})
-	go func() {
-		time.Sleep(250 * time.Millisecond)
-		s.logger.Info().Msg("shutdown requested via API")
-		// Send SIGINT to self so the main signal handler performs full cleanup
-		// (syslog stop, API server stop, engine shutdown) in the correct order.
-		p, err := os.FindProcess(os.Getpid())
-		if err != nil {
-			s.logger.Error().Err(err).Msg("failed to find own process for shutdown signal")
-			os.Exit(0)
-		}
-		if err := p.Signal(syscall.SIGINT); err != nil {
-			s.logger.Error().Err(err).Msg("failed to send shutdown signal")
-			os.Exit(0)
-		}
-	}()
+	s.logger.Info().Msg("shutdown requested via API")
+	s.requestShutdown(nil)
 }
 
 // handleConfigReload reports that configuration activation requires restart.

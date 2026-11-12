@@ -3,8 +3,11 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -48,6 +51,58 @@ func newTestServer(engine *core.Engine) *Server {
 func authedReq(req *http.Request) *http.Request {
 	req.Header.Set("Authorization", "Bearer test-key")
 	return req
+}
+
+func TestServerStartReportsBindAndTLSFailures(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	engine := testEngine()
+	engine.Config.Server.Port = listener.Addr().(*net.TCPAddr).Port
+	if err := newTestServer(engine).Start(); err == nil || !strings.Contains(err.Error(), "listening for API requests") {
+		t.Fatalf("expected a bind error, got %v", err)
+	}
+
+	badPEM := filepath.Join(t.TempDir(), "invalid.pem")
+	if err := os.WriteFile(badPEM, []byte("invalid"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	engine.Config.Server.TLSCert = badPEM
+	for _, key := range []string{"", badPEM} {
+		engine.Config.Server.TLSKey = key
+		if err := newTestServer(engine).Start(); err == nil || !strings.Contains(err.Error(), "loading API TLS key pair") {
+			t.Fatalf("expected a TLS error, got %v", err)
+		}
+	}
+}
+
+func TestServerShutdownRequestIsAuthorizedAndIdempotent(t *testing.T) {
+	s := newTestServer(testEngine())
+	for _, authorized := range []bool{false, true, true} {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/shutdown", nil)
+		want := http.StatusUnauthorized
+		if authorized {
+			authedReq(req)
+			want = http.StatusOK
+		}
+		rec := httptest.NewRecorder()
+		s.server.Handler.ServeHTTP(rec, req)
+		if rec.Code != want {
+			t.Fatalf("got %d, want %d: %s", rec.Code, want, rec.Body)
+		}
+		select {
+		case <-s.ShutdownRequested():
+			if !authorized {
+				t.Fatal("unauthorized shutdown")
+			}
+		default:
+			if authorized {
+				t.Fatal("authorized shutdown was not delivered")
+			}
+		}
+	}
 }
 
 func TestTokenVaultExchangeValidatesWholeBody(t *testing.T) {
