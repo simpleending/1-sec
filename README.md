@@ -3,8 +3,8 @@
 
   <h1>🛡️ 1-SEC</h1>
   <p><strong>One binary. Connected security signals.</strong></p>
-  <p>16 security modules. Single binary. Zero config required.<br/>
-  Covers AI attacks, prompt injection, ransomware, supply chain, deepfakes, quantum crypto, and more.</p>
+  <p>16 modules in the main engine. Recommended Rust bundle or standalone download.<br/>
+  Connect telemetry for local detection and configurable response across security layers.</p>
 
   <p>
     <a href="https://github.com/simpleending/1-sec/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-AGPL%20v3-blue.svg?style=flat-square" alt="License"></a>
@@ -26,14 +26,14 @@
 
 1-SEC is an open-source (AGPLv3) security telemetry and response engine. Its modules share a NATS JetStream event bus in **one operational binary**, with an optional Rust sidecar. Protection depends on relevant trusted telemetry, an enforcing integration where prevention is required, configured policies and operating-system privileges.
 
-- **Zero config by default** — secure out of the box, tune later
-- **One default operational binary** — no required external runtime services for core operation
+- **Starts with defaults** — connect telemetry and configure response before relying on protection
+- **One-download Rust bundle** — managed scanner plus the main engine; standalone executable also available
 - **Privacy first** — your data stays on your server; cloud features are opt-in
-- **AI is additive** — all 16 modules work standalone; the AI analysis layer adds cross-module correlation on top
+- **AI is additive** — local detection and rule-based correlation need no provider; Gemini analysis remains passive without keys
 
 Security intelligence reviews include verified code changes and regression checks. See the [October 13 implementation notes](docs/security-updates/2026-10-13.md) for SAML structure detection, agent identity checks, and exfiltration hardening.
 
-The current release is [v0.4.33](https://github.com/simpleending/1-sec/releases/tag/v0.4.33). It adds in-process log collection, more reliable startup and shutdown, and patches for Go and the broker's compression library. See the [upgrade notes](docs/security-updates/2026-11-12-v0.4.33.md) and the [durable audit deployment guide](docs/security-updates/2026-11-05-v0.4.32.md).
+The current release is [v0.4.34](https://github.com/simpleending/1-sec/releases/tag/v0.4.34). It fixes two skipped event inputs, aligns CLI discovery with runtime modules, and offers a recommended Rust bundle alongside standalone downloads. See the [upgrade notes](docs/security-updates/2026-11-13-v0.4.34.md), [module review](docs/security-updates/2026-11-13-module-review.md), and [durable audit deployment guide](docs/security-updates/2026-11-05-v0.4.32.md).
 
 The [sensor identity follow-up](docs/security-updates/2026-11-05-sensor-identity.md) adds individual ingest-only credentials, explicit host/event grants, durable rotation/revocation and checks on queued containment. Enrollment is opt-in; remote sensor observations do not authorize local OS actions. Existing broker and operator credentials remain privileged.
 
@@ -90,27 +90,27 @@ helm install 1sec ./deploy/helm \
 
 | # | Module | What it covers | Tier |
 |---|--------|---------------|------|
-| 1 | **Network Guardian** | DDoS, rate limiting, IP reputation, geo-fencing, DNS tunneling, C2 beaconing, lateral movement (PtH, Kerberoasting, Golden Ticket, DCSync), port scan detection, dynamic IP threat scoring (auto-blocks repeat offenders across modules) | 1 |
-| 2 | **API Fortress** | BOLA detection, schema validation, shadow API discovery, per-endpoint rate limiting, security misconfiguration detection, unsafe API consumption monitoring | 1 |
-| 3 | **IoT & OT Shield** | Device fingerprinting, protocol anomaly (MQTT/CoAP/Modbus/DNP3/BACnet/OPC UA), firmware integrity, default credential detection (Dell, HPE, Lenovo, Supermicro), OT command validation, device behavior baselining, network segmentation enforcement, persistent firmware implant detection (HiatusRAT-X), ICS wiper malware detection (VoltRuptor), coordinated multi-protocol OT attack detection | 1 |
-| 4 | **Injection Shield** | SQLi (including blind boolean/time/error-based), XSS, SSRF, command injection, template injection, NoSQL injection, path traversal, Zip Slip archive traversal, deserialization RCE (Java/PHP/.NET/Python pickle), canary token detection, 8-phase input normalization pipeline | 2 |
-| 5 | **Supply Chain Sentinel** | SBOM generation, package integrity, typosquatting (Levenshtein), dependency confusion, CI/CD hardening | 2 |
-| 6 | **Ransomware Interceptor** | Encryption detection (threshold: 5 files), canary files, exfiltration monitoring, wiper detection (MBR/GPT), shadow copy deletion, compound attack correlation, intermittent/partial encryption detection, ESXi/hypervisor ransomware targeting, SSH tunneling for lateral movement, pre-ransomware credential harvesting (Mimikatz, LSASS, NTLM, Kerberos), Linux ransomware patterns | 2 |
-| 7 | **Auth Fortress** | Brute force, credential stuffing, session hijack, impossible travel, MFA fatigue, OAuth consent phishing, password spray, stolen token detection, AitM/adversary-in-the-middle detection, passkey/FIDO2/WebAuthn monitoring, auth downgrade detection | 3 |
-| 8 | **Deepfake Shield** | Validated PCM audio anomaly screening (prosody/MFCC/phase statistics), bounded JPEG/PNG frame analysis, phishing indicators, Unicode homoglyph + Punycode domain spoofing, reply-chain checks. Media scores are uncalibrated screening signals, not authenticity verdicts. | 3 |
-| 9 | **Identity Fabric Monitor** | Synthetic identity detection, privilege escalation, service account anomaly, bulk creation detection | 3 |
-| 10 | **LLM Firewall** | 65+ prompt injection patterns, jailbreak detection (DAN, FlipAttack, many-shot, time bandit, skeleton key, XPIA, LPCI, etc.), output filtering, multi-turn tracking, tool-chain abuse, excessive agency monitoring, system prompt leakage detection, RAG/embedding weakness analysis, misinformation detection, multimodal hidden injection scanning (image metadata, HTML/CSS, PDF hidden text). Zero LLM calls, zero external dependencies. | 4 |
-| 11 | **AI Agent Containment** | Action sandboxing, tool-use monitoring, shadow AI detection, scope escalation, policy enforcement, OWASP Agentic AI Top 10 coverage, tool integrity monitoring, goal hijack detection, memory poisoning detection, cascade failure monitoring | 4 |
-| 12 | **Data Poisoning Guard** | Training data integrity, RAG pipeline validation (30+ injection patterns incl. delimiter/exfiltration attacks), adversarial input detection, model drift monitoring with output distribution tracking (Jensen-Shannon divergence), model supply chain attack detection (slopsquatting, unsigned models) | 4 |
-| 13 | **Quantum-Ready Crypto** | Crypto inventory with explicit unknown assessments, PQC migration readiness, TLS auditing, cert expiry, reported classical traffic-capture risk. Does not re-encrypt applications or prove HNDL intent. | 5 |
-| 14 | **Runtime Watcher** | FIM, container escape, LOLBin detection (40+), memory injection (process hollowing, DLL injection), persistence mechanisms, UEFI/bootkit, fileless malware, symlink privilege escalation, ETW/logging evasion, Lua shellcode loader detection | 6 |
-| 15 | **Cloud Posture Manager** | Config drift, misconfiguration (public buckets, open SGs, wildcard IAM), secrets sprawl, Kubernetes RBAC auditing, container posture checks, KSPM | 6 |
-| 16 | **AI Analysis Engine** | Two-tier Gemini pipeline: Flash Lite for triage, Flash for deep classification and cross-module correlation | X |
+| 1 | **Network Guardian** | Supplied network/DNS/connection signals: flood/rate, IP scoring, country-code, tunneling, beaconing, lateral-movement and scan indicators; response requires configured enforcement | 1 |
+| 2 | **API Fortress** | Supplied API access/rate anomalies, reported schema violations, learned endpoints, risky fields/output, GraphQL/JWT/SSRF indicators; no OpenAPI parser or JWT signature verification | 1 |
+| 3 | **IoT & OT Shield** | Supplied device/protocol/firmware/command evidence and segmentation alerts; management-access decisions require a trusted gateway to enforce them | 1 |
+| 4 | **Injection Shield** | Normalized request and supported upload content checks for injection, traversal, deserialization and credential-exposure indicators; enforcement is separate | 2 |
+| 5 | **Supply Chain Sentinel** | Reported SBOM findings, supplied hash comparison, package-name/registry risk and CI/CD content checks; no SBOM generation or artifact signature verification | 2 |
+| 6 | **Ransomware Interceptor** | Attributed file/entropy evidence, canary-trigger events, egress and process/command indicators for encryption, exfiltration and destructive activity; no automatic canary deployment or recovery | 2 |
+| 7 | **Auth Fortress** | Supplied login/session/MFA/OAuth/token/passkey/SAML anomalies; does not replace the identity provider or its signature/replay validation | 3 |
+| 8 | **Deepfake Shield** | Validated PCM and bounded JPEG/PNG frame screening, phishing and spoofing checks; uncalibrated heuristics, not authenticity verdicts | 3 |
+| 9 | **Identity Fabric Monitor** | Supplied account creation/mutation/role/service-account activity checks; heuristic scoring and a small built-in disposable-domain list, not identity verification | 3 |
+| 10 | **LLM Firewall** | Local prompt/output/tool/retrieval and supported multimodal rules; not factual verification or universal jailbreak prevention; application enforcement required | 4 |
+| 11 | **AI Agent Containment** | Supplied agent/tool/goal/memory/delegation/web/payment/network observations; policy and anomaly alerts, not an OS sandbox or per-role tool allowlist | 4 |
+| 12 | **Data Poisoning Guard** | Supplied dataset/model hashes, retrieval content, inference-confidence distribution and model-download/web-content indicators; no vector-store repair or universal weight inspection | 4 |
+| 13 | **Quantum-Ready Crypto** | Supplied crypto/TLS inventory with unknown assessments, PQC readiness, certificate checks and reported capture-risk indicators; no encryption migration or proof of HNDL intent | 5 |
+| 14 | **Runtime Watcher** | Configured file-hash checks and Linux inotify plus supplied process/container/memory/persistence/firmware indicators; not a universal kernel sensor | 6 |
+| 15 | **Cloud Posture Manager** | Supplied cloud/Kubernetes/container configuration, logs and policy results; no automatic cloud inventory, IaC reconciliation or compliance certification | 6 |
+| 16 | **AI Analysis Engine** | Optional Gemini triage/classification/correlation; requires provider keys and network access and remains passive without keys | X |
 | — | **Threat Correlator** | Cross-module attack chain detection — automatically correlates alerts from multiple modules targeting the same source IP into unified incident alerts. 9 pre-defined attack chains (kill chain, credential→lateral, injection→persistence, etc.) | Core |
 
 ---
 
-Media screening and ransomware response require the right telemetry. See the [detection reliability update](docs/security-updates/2026-10-23-detection-reliability.md) for accepted formats, process attribution, entropy baselines, enforcement behavior, and tested limits.
+See the [module claims and test review](docs/security-updates/2026-11-13-module-review.md) for all 16 modules, measured test coverage, corrected claims and remaining validation gaps. Media screening and ransomware response require the right telemetry. See the [detection reliability update](docs/security-updates/2026-10-23-detection-reliability.md) for accepted formats, process attribution, entropy baselines, enforcement behavior, and tested limits.
 
 ## CLI Reference
 
@@ -264,7 +264,7 @@ export GEMINI_API_KEY_2=key2
 
 ## Enforcement Presets
 
-1-SEC ships with `dry_run: true` and the `safe` preset by default. This means all 16 modules detect threats immediately, but no enforcement actions (block IP, kill process, etc.) are actually executed until you're ready.
+1-SEC ships with `dry_run: true` and the `safe` preset by default. Local detectors analyze connected telemetry; optional AI analysis needs provider keys. No enforcement actions (block IP, kill process, etc.) are actually executed until you're ready.
 
 | Preset | Behavior | When to use |
 |--------|----------|-------------|
@@ -408,7 +408,7 @@ The Helm chart includes:
 
 - **Core Engine**: Go 1.22+ (High-concurrency detection, SOAR logic, REST API)
 - **Performance Layer**: Rust 1.75+ (High-speed pattern matching, DPI, packet capture)
-- **Messaging**: NATS JetStream (Embedded, zero-latency internal event bus)
+- **Messaging**: NATS JetStream (embedded persistent event broker)
 - **AI Layer**: Google Gemini (Flash/Lite) for cross-module threat correlation
 - **Frontend**: Next.js 14 / TailwindCSS (Cloud Dashboard & Landing Page)
 - **Storage**: LevelDB / Local FS (Fully standalone, no external DB required)

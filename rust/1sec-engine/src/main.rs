@@ -1,7 +1,7 @@
 //! 1SEC Engine — High-performance Rust sidecar for the 1SEC cybersecurity platform.
 //!
 //! This binary connects to the same NATS JetStream bus as the Go engine and provides:
-//! - Hot-path regex pattern matching (5-10x faster than Go's RE2)
+//! - Additional pattern matching with RegexSet candidate selection
 //! - Optional raw packet capture and protocol parsing
 
 #[allow(dead_code)]

@@ -68,7 +68,7 @@ func New() *Engine {
 
 func (e *Engine) Name() string { return ModuleName }
 func (e *Engine) Description() string {
-	return "Two-tier AI analysis: Gemini Flash Lite for triage, Gemini Flash for deep threat classification and cross-module correlation"
+	return "Optional two-tier Gemini triage, threat classification and correlation; requires a configured provider API key and network access, otherwise remains passive"
 }
 
 // EventTypes returns nil — the AI engine receives all events for correlation.

@@ -40,7 +40,7 @@ func New() *Guardian { return &Guardian{} }
 
 func (g *Guardian) Name() string { return ModuleName }
 func (g *Guardian) Description() string {
-	return "DDoS mitigation, rate limiting, IP reputation, geo-fencing, DNS tunneling detection, C2 covert channel detection, lateral movement detection, and port scan detection"
+	return "Network rate/flood indicators, IP threat scoring, supplied country checks, DNS tunneling/C2/lateral-movement/port-scan heuristics; blocking requires configured enforcement"
 }
 func (g *Guardian) EventTypes() []string {
 	// Network guardian is a catch-all: it needs to see events from ALL modules

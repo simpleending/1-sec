@@ -42,7 +42,7 @@ func New() *Shield { return &Shield{} }
 
 func (s *Shield) Name() string { return ModuleName }
 func (s *Shield) Description() string {
-	return "IoT/OT device fingerprinting, protocol anomaly detection, firmware integrity, default credential scanning, rogue device detection, OT command validation, device behavior baselining, network segmentation enforcement, and firmware vulnerability tracking"
+	return "Supplied device/protocol/firmware anomalies, credential and OT command risk indicators, device baselines, segmentation violation alerts, and management-access decisions requiring gateway enforcement"
 }
 func (s *Shield) EventTypes() []string {
 	return []string{

@@ -16,8 +16,8 @@ import (
 
 const ModuleName = "supply_chain"
 
-// Sentinel is the Supply Chain Sentinel module providing SBOM generation,
-// package integrity verification, CI/CD hardening checks, and typosquatting detection.
+// Sentinel checks supplied SBOM findings, package hashes, and CI/CD content.
+// It does not generate SBOMs or verify artifact signatures/provenance.
 type Sentinel struct {
 	logger       zerolog.Logger
 	bus          *core.EventBus
@@ -35,7 +35,7 @@ func New() *Sentinel { return &Sentinel{} }
 
 func (s *Sentinel) Name() string { return ModuleName }
 func (s *Sentinel) Description() string {
-	return "SBOM generation, package integrity verification, CI/CD pipeline hardening, and typosquatting detection"
+	return "Supplied SBOM finding analysis, reported package hash comparison, typosquatting/dependency-confusion indicators, CI/CD content checks, and missing signature/provenance metadata alerts"
 }
 func (s *Sentinel) EventTypes() []string {
 	return []string{

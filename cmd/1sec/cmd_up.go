@@ -37,8 +37,10 @@ import (
 	"github.com/1sec-project/1sec/internal/modules/supplychain"
 )
 
-func registerModules(engine *core.Engine) {
-	modules := []core.Module{
+// builtinModules is shared by startup and CLI discovery so integrations see
+// the actual runtime descriptions and accepted event types.
+func builtinModules() []core.Module {
+	return []core.Module{
 		network.New(),
 		apifortress.New(),
 		iot.New(),
@@ -56,7 +58,10 @@ func registerModules(engine *core.Engine) {
 		cloudposture.New(),
 		aiengine.New(),
 	}
-	for _, mod := range modules {
+}
+
+func registerModules(engine *core.Engine) {
+	for _, mod := range builtinModules() {
 		if err := engine.Registry.Register(mod); err != nil {
 			engine.Logger.Warn().Err(err).Str("module", mod.Name()).Msg("failed to register module")
 		}

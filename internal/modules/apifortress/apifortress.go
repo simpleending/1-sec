@@ -19,9 +19,9 @@ import (
 const ModuleName = "api_fortress"
 
 // Fortress is the API Fortress module providing BOLA detection, BFLA detection,
-// mass assignment protection, schema validation, shadow API discovery, per-endpoint
-// rate limiting, excessive data exposure detection, GraphQL abuse prevention,
-// JWT validation, SSRF-via-API detection, and response anomaly analysis.
+// mass assignment indicators, reported schema violations, learned endpoint discovery,
+// rate anomaly alerts, data exposure detection, GraphQL abuse indicators,
+// JWT risk indicators, SSRF-via-API detection, and response anomaly analysis.
 type Fortress struct {
 	logger           zerolog.Logger
 	bus              *core.EventBus
@@ -48,7 +48,7 @@ func New() *Fortress { return &Fortress{} }
 
 func (f *Fortress) Name() string { return ModuleName }
 func (f *Fortress) Description() string {
-	return "BOLA/BFLA detection, mass assignment protection, API schema validation, shadow API discovery, per-endpoint rate limiting, excessive data exposure, GraphQL abuse prevention, JWT validation, SSRF-via-API detection, and response anomaly analysis"
+	return "API access/rate anomalies, reported schema violations, learned endpoint discovery, mass-assignment/data-exposure indicators, GraphQL/JWT risk checks, SSRF indicators, misconfiguration and upstream-response monitoring; no OpenAPI parser or JWT signature verification"
 }
 func (f *Fortress) EventTypes() []string {
 	return []string{

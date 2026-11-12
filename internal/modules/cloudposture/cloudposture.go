@@ -36,7 +36,7 @@ func New() *Manager { return &Manager{} }
 
 func (m *Manager) Name() string { return ModuleName }
 func (m *Manager) Description() string {
-	return "Cloud configuration drift detection, misconfiguration scanning, secrets sprawl detection, multi-cloud policy enforcement, and Kubernetes security posture management (KSPM)"
+	return "Supplied cloud configuration drift, misconfiguration and secret indicators, reported policy failures, Kubernetes RBAC/admission observations, and container posture checks; no automatic cloud inventory or compliance certification"
 }
 func (m *Manager) EventTypes() []string {
 	return []string{

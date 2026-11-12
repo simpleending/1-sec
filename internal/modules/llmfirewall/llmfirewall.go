@@ -75,7 +75,7 @@ func New() *Firewall {
 
 func (f *Firewall) Name() string { return ModuleName }
 func (f *Firewall) Description() string {
-	return "Prompt injection detection, jailbreak prevention, output filtering, and token budget monitoring for LLM applications"
+	return "Local prompt-injection/jailbreak indicators, sensitive-output checks, token budgets, tool/session/retrieval heuristics, and supported multimodal structure scanning; applications must enforce decisions"
 }
 func (f *Firewall) EventTypes() []string {
 	return []string{

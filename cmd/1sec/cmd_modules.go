@@ -22,39 +22,29 @@ type moduleInfo struct {
 	EventTypes  []string `json:"event_types,omitempty"`
 }
 
-var allModules = []moduleInfo{
-	{"network_guardian", "DDoS mitigation, rate limiting, IP reputation, geo-fencing, DNS tunneling, C2 detection, lateral movement, port scan detection, dynamic IP threat scoring", 1, "Network & Perimeter",
-		[]string{"dns_query", "dns_response", "network_connection", "connection_established", "lateral_movement", "smb_connection", "rdp_connection", "port_scan", "syn_scan", "amplification_attack"}},
-	{"api_fortress", "BOLA detection, schema validation, shadow API discovery, security misconfiguration detection, unsafe API consumption monitoring", 1, "Network & Perimeter",
-		[]string{"api_request", "api_response", "schema_violation", "api_config", "api_upstream_response"}},
-	{"iot_shield", "Device fingerprinting, protocol anomaly (MQTT/CoAP/Modbus/DNP3/BACnet/OPC-UA), firmware integrity, default credential detection, OT command validation, persistent firmware implant detection, ICS wiper malware detection, coordinated multi-protocol OT attack detection", 1, "Network & Perimeter",
-		[]string{"device_connect", "firmware_update", "protocol_anomaly", "firmware_boot", "ot_wiper", "ot_coordinated"}},
-	{"injection_shield", "SQLi (incl. blind), XSS, SSRF, command injection, template injection, NoSQL injection, path traversal, Zip Slip, deserialization RCE, canary tokens", 2, "Application Layer",
-		[]string{"http_request", "query_exec", "command_exec", "template_render"}},
-	{"supply_chain", "SBOM analysis, package integrity, CI/CD hardening, typosquatting detection", 2, "Application Layer",
-		[]string{"package_install", "dependency_update", "ci_pipeline", "sbom_scan"}},
-	{"ransomware", "Encryption detection (threshold: 5), canary files, exfiltration detection, wiper detection, intermittent/partial encryption, ESXi/hypervisor ransomware targeting, pre-ransomware credential harvesting, Linux ransomware patterns", 2, "Application Layer",
-		[]string{"file_encrypt", "file_modify", "process_exec", "data_exfil", "vm_encryption", "esxi_command", "credential_dump"}},
-	{"auth_fortress", "Brute force, credential stuffing, session theft, impossible travel, MFA bypass, password spraying, OAuth token abuse, AitM/adversary-in-the-middle detection, passkey/FIDO2/WebAuthn monitoring, auth downgrade detection", 3, "Identity & Access",
-		[]string{"login_attempt", "login_success", "login_failure", "session_activity", "mfa_attempt", "oauth_grant", "password_spray", "auth_proxy", "passkey_auth"}},
-	{"deepfake_shield", "Synthetic voice/video detection, AI phishing detection", 3, "Identity & Access",
-		[]string{"media_upload", "voice_call", "video_stream", "email_received"}},
-	{"identity_monitor", "Synthetic identity, privilege escalation, service account monitoring", 3, "Identity & Access",
-		[]string{"identity_create", "privilege_change", "service_account_activity"}},
-	{"llm_firewall", "Prompt injection, output filtering, jailbreak detection, excessive agency monitoring, system prompt leakage detection, RAG/embedding weakness analysis, misinformation detection", 4, "AI-Specific Defense",
-		[]string{"llm_prompt", "llm_response", "prompt_injection", "jailbreak_attempt", "agent_decision", "rag_retrieval", "llm_citation"}},
-	{"ai_containment", "Action sandboxing, shadow AI detection, OWASP Agentic AI Top 10 coverage, tool integrity monitoring, goal hijack detection, memory poisoning detection, cascade failure monitoring, agentic web access monitoring (llms.txt, x402 payments, markdown ingestion scanning, agent identity delegation tracking)", 4, "AI-Specific Defense",
-		[]string{"ai_action", "model_deploy", "shadow_ai_detected", "tool_invocation", "agent_goal", "agent_memory", "agent_web_fetch", "agent_markdown_ingest", "agent_payment", "x402_payment", "agent_identity_delegation", "llms_txt_access"}},
-	{"data_poisoning", "Training data integrity, RAG verification, adversarial input detection, model supply chain attack detection (slopsquatting, unsigned models), agentic web content integrity (llms.txt / markdown endpoint poisoning detection)", 4, "AI-Specific Defense",
-		[]string{"training_data", "rag_query", "adversarial_input", "model_download", "model_registry", "llms_txt_fetch", "markdown_endpoint_fetch"}},
-	{"quantum_crypto", "Crypto inventory, PQC migration readiness, crypto-agility", 5, "Cryptography",
-		[]string{"crypto_operation", "certificate_issue", "key_exchange"}},
-	{"runtime_watcher", "File integrity, container escape, privilege escalation, LOLBin detection, symlink attacks, ETW bypass, Lua shellcode", 6, "Runtime & Infrastructure",
-		[]string{"file_change", "container_event", "privilege_escalation", "process_exec"}},
-	{"cloud_posture", "Config drift, misconfiguration, secrets sprawl detection, Kubernetes RBAC auditing, container posture checks, KSPM", 6, "Runtime & Infrastructure",
-		[]string{"config_change", "secret_detected", "misconfiguration", "k8s_rbac_change", "k8s_admission", "container_config"}},
-	{"ai_analysis_engine", "Two-tier LLM pipeline: triage + deep classification", 0, "Cross-Cutting",
-		[]string{"*"}},
+var allModules = moduleCatalog()
+
+func moduleCatalog() []moduleInfo {
+	tiers := map[string]int{
+		"network_guardian": 1, "api_fortress": 1, "iot_shield": 1,
+		"injection_shield": 2, "supply_chain": 2, "ransomware": 2,
+		"auth_fortress": 3, "deepfake_shield": 3, "identity_monitor": 3,
+		"llm_firewall": 4, "ai_containment": 4, "data_poisoning": 4,
+		"quantum_crypto": 5, "runtime_watcher": 6, "cloud_posture": 6,
+		"ai_analysis_engine": 0,
+	}
+	tierNames := []string{"Cross-Cutting", "Network & Perimeter", "Application Layer", "Identity & Access", "AI-Specific Defense", "Cryptography", "Runtime & Infrastructure"}
+	modules := builtinModules()
+	catalog := make([]moduleInfo, 0, len(modules))
+	for _, module := range modules {
+		tier := tiers[module.Name()]
+		events := module.EventTypes()
+		if len(events) == 0 {
+			events = []string{"*"}
+		}
+		catalog = append(catalog, moduleInfo{module.Name(), module.Description(), tier, tierNames[tier], events})
+	}
+	return catalog
 }
 
 func cmdModules(args []string) {

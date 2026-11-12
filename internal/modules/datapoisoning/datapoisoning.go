@@ -64,7 +64,7 @@ func (g *Guard) EventTypes() []string {
 	}
 }
 func (g *Guard) Description() string {
-	return "Training data integrity validation, RAG source verification, adversarial input detection, model weight drift monitoring, and agentic web content integrity (llms.txt / markdown endpoint poisoning detection)"
+	return "Supplied dataset/model hash checks, RAG injection indicators, prediction-confidence drift monitoring, model-download risk indicators, and web-content change tracking"
 }
 
 func (g *Guard) Start(ctx context.Context, bus *core.EventBus, pipeline *core.AlertPipeline, cfg *core.Config) error {
@@ -96,7 +96,7 @@ func (g *Guard) HandleEvent(event *core.SecurityEvent) error {
 		g.handleDataUpdate(event)
 	case "rag_query", "rag_retrieval", "context_injection":
 		g.handleRAGEvent(event)
-	case "model_inference", "prediction":
+	case "inference_result", "model_inference", "prediction":
 		g.handleInference(event)
 	case "model_update", "model_deploy", "weight_change":
 		g.handleModelUpdate(event)

@@ -74,7 +74,7 @@ var unsafeAgentURISchemes = map[string]struct{}{
 	"smb":    {},
 }
 
-// Containment is the AI Agent Containment module providing action sandboxing,
+// Containment is the AI Agent Containment module providing action policy monitoring,
 // tool-use monitoring, autonomous behavior detection, shadow AI detection,
 // MCP tool poisoning detection, goal hijacking detection, memory poisoning
 // detection, cascading failure monitoring, and rogue agent detection.
@@ -137,7 +137,7 @@ func (c *Containment) EventTypes() []string {
 	}
 }
 func (c *Containment) Description() string {
-	return "AI agent containment: action sandboxing, tool-use monitoring, MCP tool poisoning detection, goal hijacking detection, memory poisoning detection, cascading failure monitoring, shadow AI discovery, rogue agent detection, agentic web access monitoring, Auth0 Token Vault integration (OWASP Agentic AI Top 10)"
+	return "Agent action policy monitoring, tool integrity and poisoning indicators, goal/memory/cascade anomalies, shadow AI endpoint detection, web/payment/delegation monitoring, and optional Token Vault integration; enforcement requires a connected executor or gateway"
 }
 
 func (c *Containment) Start(ctx context.Context, bus *core.EventBus, pipeline *core.AlertPipeline, cfg *core.Config) error {
@@ -189,7 +189,7 @@ func (c *Containment) HandleEvent(event *core.SecurityEvent) error {
 		c.handleAgentAction(event)
 	case "ai_api_call", "llm_api_call", "model_inference":
 		c.handleAIAPICall(event)
-	case "network_request":
+	case "network_request", "network_connection":
 		c.handleNetworkForShadowAI(event)
 	case "agent_spawn", "agent_created":
 		c.handleAgentSpawn(event)
