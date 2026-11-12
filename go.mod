@@ -1,6 +1,6 @@
 module github.com/1sec-project/1sec
 
-go 1.26.10
+go 1.26.11
 
 require (
 	github.com/google/uuid v1.6.0
@@ -16,7 +16,7 @@ require (
 require (
 	github.com/antithesishq/antithesis-sdk-go v0.7.0-default-no-op // indirect
 	github.com/google/go-tpm v0.9.8 // indirect
-	github.com/klauspost/compress v1.18.7 // indirect
+	github.com/klauspost/compress v1.20.2 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.19 // indirect
 	github.com/minio/highwayhash v1.0.4 // indirect

@@ -665,7 +665,7 @@ func (s *Server) handleEnforceConfigPost(w http.ResponseWriter, r *http.Request)
 		AutoApproveAbove *string  `json:"auto_approve_above,omitempty"`
 		RequireApproval  []string `json:"require_approval,omitempty"`
 	}
-	if err := decodeJSONBody(r, &body); err != nil {
+	if err := decodeJSONBody(w, r, &body); err != nil {
 		s.writeEnforcementJSON(w, http.StatusBadRequest, map[string]interface{}{"error": err.Error()})
 		return
 	}

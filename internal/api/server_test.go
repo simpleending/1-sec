@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/1sec-project/1sec/internal/core"
+	"github.com/1sec-project/1sec/internal/modules/aicontainment"
 	"github.com/rs/zerolog"
 )
 
@@ -47,6 +48,42 @@ func newTestServer(engine *core.Engine) *Server {
 func authedReq(req *http.Request) *http.Request {
 	req.Header.Set("Authorization", "Bearer test-key")
 	return req
+}
+
+func TestTokenVaultExchangeValidatesWholeBody(t *testing.T) {
+	engine := testEngine()
+	engine.Config.TokenVault.Enabled = true
+	engine.Config.TokenVault.Auth0Domain = "example.invalid"
+	engine.Config.TokenVault.Auth0ClientID = "test"
+	module := aicontainment.New()
+	if err := engine.Registry.Register(module); err != nil {
+		t.Fatal(err)
+	}
+	if err := module.Start(t.Context(), nil, engine.Pipeline, engine.Config); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = module.Stop() })
+
+	server := newTestServer(engine)
+	for _, tc := range []struct {
+		body string
+		code string
+	}{
+		{`{} {}`, "invalid_body"},
+		{`{}` + strings.Repeat(" ", 64<<10), "invalid_body"},
+		{"{}\n", "missing_params"},
+	} {
+		req := authedReq(httptest.NewRequest(http.MethodPost, "/api/v1/token-vault/exchange", strings.NewReader(tc.body)))
+		rec := httptest.NewRecorder()
+		server.server.Handler.ServeHTTP(rec, req)
+		var response struct {
+			Code string `json:"code"`
+		}
+		err := json.Unmarshal(rec.Body.Bytes(), &response)
+		if err != nil || rec.Code != http.StatusBadRequest || response.Code != tc.code {
+			t.Errorf("want 400 %s, got %d %s (decode: %v)", tc.code, rec.Code, rec.Body, err)
+		}
+	}
 }
 
 // ─── writeJSON ────────────────────────────────────────────────────────────────

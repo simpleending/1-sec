@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/1sec-project/1sec/internal/core"
@@ -50,6 +51,37 @@ func testEngineNoEnforcement() *core.Engine {
 		Registry: core.NewModuleRegistry(logger),
 		Pipeline: core.NewAlertPipeline(logger, 1000),
 		Logger:   logger,
+	}
+}
+
+func TestEnforceConfigRequiresOneBoundedJSONBody(t *testing.T) {
+	const update = `{"dry_run":false}`
+	const limit = 64 << 10
+	for _, tc := range []struct {
+		name string
+		body string
+		want int
+	}{
+		{"trailing JSON", update + ` {"dry_run":true}`, http.StatusBadRequest},
+		{"trailing garbage", update + " invalid", http.StatusBadRequest},
+		{"oversized padding", update + strings.Repeat(" ", limit+1-len(update)), http.StatusBadRequest},
+		{"exact limit", update + strings.Repeat(" ", limit-len(update)), http.StatusOK},
+		{"normal update", update + "\n", http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := testEngineWithEnforcement("balanced", true)
+			server := newTestServer(engine)
+			req := authReq(httptest.NewRequest(http.MethodPost, "/api/v1/enforce/config", strings.NewReader(tc.body)))
+			req.ContentLength = -1
+			rec := httptest.NewRecorder()
+			server.server.Handler.ServeHTTP(rec, req)
+			if rec.Code != tc.want {
+				t.Errorf("status = %d, want %d: %s", rec.Code, tc.want, rec.Body)
+			}
+			if dryRun := engine.Config.Enforcement.GetDryRun(); dryRun != (tc.want != http.StatusOK) {
+				t.Errorf("dry run = %t after status %d, want %t", dryRun, rec.Code, tc.want != http.StatusOK)
+			}
+		})
 	}
 }
 

@@ -801,10 +801,17 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 	})
 }
 
-// decodeJSONBody reads and decodes a JSON request body with a 64KB limit.
-func decodeJSONBody(r *http.Request, dst interface{}) error {
-	limited := io.LimitReader(r.Body, 1<<16)
-	return json.NewDecoder(limited).Decode(dst)
+// decodeJSONBody accepts one complete JSON value within a 64 KiB request body.
+func decodeJSONBody(w http.ResponseWriter, r *http.Request, dst interface{}) error {
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(dst); err != nil {
+		return err
+	}
+	if err := decoder.Decode(new(json.RawMessage)); err != io.EOF {
+		return fmt.Errorf("expected exactly one JSON value within 64 KiB")
+	}
+	return nil
 }
 
 // mutatingPaths lists URL path prefixes that require write-scope API keys.
@@ -1153,7 +1160,7 @@ func (s *Server) handleTokenVaultExchange(w http.ResponseWriter, r *http.Request
 		Connection       string `json:"connection"`
 		LoginHint        string `json:"login_hint,omitempty"`
 	}
-	if err := decodeJSONBody(r, &req); err != nil {
+	if err := decodeJSONBody(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_body", "invalid JSON body")
 		return
 	}
