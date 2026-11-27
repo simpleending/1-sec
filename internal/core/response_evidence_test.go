@@ -44,6 +44,32 @@ func TestResponseRequiresActionEvidence(t *testing.T) {
 	}
 }
 
+func TestObservationOnlyAllowsNotificationsButNotHostActions(t *testing.T) {
+	re := testResponseEngine(t, enforcementConfig("", false))
+	defer re.Stop()
+
+	policy := &ResponsePolicy{Enabled: true, MinSeverity: SeverityInfo, MaxActionsPerMin: 100}
+	mocks := make(map[ActionType]*mockExecutor)
+	for _, action := range []ActionType{ActionBlockIP, ActionKillProcess, ActionQuarantineFile, ActionDropConnection, ActionDisableUser, ActionCommand, ActionLog, ActionWebhook} {
+		m := &mockExecutor{}
+		mocks[action], re.executors[action] = m, m
+		policy.Actions = append(policy.Actions, ResponseRule{Action: action, MinSeverity: SeverityInfo})
+	}
+	alert := testAlertWithIP("auth_fortress", "192.0.2.18", SeverityCritical)
+	alert.ObservationOnly = true
+	re.policies[alert.Module] = policy
+	re.handleAlert(alert)
+	for action, mock := range mocks {
+		want := 0
+		if action == ActionLog || action == ActionWebhook {
+			want = 1
+		}
+		if mock.callCount != want {
+			t.Errorf("%s executed %d times; want %d", action, mock.callCount, want)
+		}
+	}
+}
+
 func TestApprovedActionStillRequiresEvidence(t *testing.T) {
 	cfg := enforcementConfig("", false)
 	cfg.Enforcement.ApprovalGate = DefaultApprovalGateConfig()

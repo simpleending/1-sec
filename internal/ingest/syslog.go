@@ -211,6 +211,13 @@ func (s *SyslogServer) handleTCPConn(conn net.Conn) {
 
 // processMessage parses a raw syslog line and publishes it as a SecurityEvent.
 func (s *SyslogServer) processMessage(raw string, sourceIP string) {
+	event := s.messageEvent(raw, sourceIP)
+	if err := s.bus.PublishEvent(event); err != nil {
+		s.logger.Error().Err(err).Msg("failed to publish syslog event")
+	}
+}
+
+func (s *SyslogServer) messageEvent(raw string, sourceIP string) *core.SecurityEvent {
 	parsed := parseSyslog(raw)
 	if parsed == nil {
 		s.logger.Debug().Str("raw", truncate(raw, 200)).Msg("unparseable syslog message, forwarding as raw event")
@@ -225,6 +232,9 @@ func (s *SyslogServer) processMessage(raw string, sourceIP string) {
 
 	event := core.NewSecurityEvent("syslog", classifySyslogEvent(parsed), severity, parsed.Message)
 	event.Source = "syslog"
+	// Raw network syslog is observable evidence, not a grant to act on a host.
+	// A loopback sender identifies a relay at most, not the reported activity.
+	event.ObservationOnly = true
 	event.SourceIP = sourceIP
 	event.Details["syslog_transport_ip"] = sourceIP
 	event.Details["syslog_facility"] = parsed.Facility
@@ -241,10 +251,7 @@ func (s *SyslogServer) processMessage(raw string, sourceIP string) {
 
 	// Extract structured fields (username, source IP, process info) from message
 	enrichEventFromSyslog(event, parsed)
-
-	if err := s.bus.PublishEvent(event); err != nil {
-		s.logger.Error().Err(err).Msg("failed to publish syslog event")
-	}
+	return event
 }
 
 // syslogMessage represents a parsed syslog message.

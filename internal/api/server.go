@@ -908,6 +908,14 @@ func authMiddleware(next http.Handler, cfg *core.Config, logger zerolog.Logger, 
 			return
 		}
 
+		// A shared API key must not cross an untrusted plaintext hop. Configured
+		// loopback binds are local by construction; a non-loopback bind can still
+		// accept requests from a same-host proxy or from direct TLS clients.
+		if key != "" && !cfg.Server.AllowInsecureLegacyAPIKeys && !cfg.ServerHostIsLoopback() && !sensorTransportAllowed(r) {
+			writeError(w, http.StatusForbidden, "tls_required", "shared API credentials require TLS or a loopback proxy")
+			return
+		}
+
 		// Extract key from Authorization header: "Bearer <key>"
 		authHeader := r.Header.Get("Authorization")
 		key = ""

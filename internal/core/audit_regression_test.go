@@ -216,8 +216,8 @@ func TestRustOnlyResultSurvivesOrdinaryGoEvent(t *testing.T) {
 	re := NewResponseEngine(zerolog.Nop(), nil, p, cfg)
 	defer re.Stop()
 	re.handleAlert(a)
-	if len(re.records) != 1 || re.records[0].Target != "192.0.2.1" {
-		t.Fatal("Rust address lost before response")
+	if !a.ObservationOnly || len(re.records) != 0 {
+		t.Fatal("unsigned Rust result acquired response authority")
 	}
 }
 

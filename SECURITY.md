@@ -4,8 +4,8 @@
 
 | Version | Supported |
 |---------|-----------|
-| 1.x     | ✅        |
-| < 1.0   | ❌        |
+| Latest stable release | Security updates |
+| Earlier releases | Upgrade to the latest stable release |
 
 ## Reporting a Vulnerability
 

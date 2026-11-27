@@ -14,6 +14,7 @@ data:
       host: "0.0.0.0"
       port: {{ .Values.service.apiPort }}
       allow_unauthenticated_read: {{ .Values.server.allowUnauthenticatedRead }}
+      allow_insecure_legacy_api_keys: {{ .Values.server.allowInsecureLegacyAPIKeys }}
 
     bus:
       url: "nats://127.0.0.1:{{ .Values.service.natsPort }}"

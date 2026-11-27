@@ -104,14 +104,15 @@ type ResponseRuleYAML struct {
 
 // ServerConfig holds API server settings.
 type ServerConfig struct {
-	Host                     string   `yaml:"host"`
-	Port                     int      `yaml:"port"`
-	APIKeys                  []string `yaml:"api_keys"`
-	ReadOnlyKeys             []string `yaml:"read_only_keys"`
-	AllowUnauthenticatedRead bool     `yaml:"allow_unauthenticated_read"`
-	CORSOrigins              []string `yaml:"cors_origins"`
-	TLSCert                  string   `yaml:"tls_cert"` // path to TLS certificate file
-	TLSKey                   string   `yaml:"tls_key"`  // path to TLS private key file
+	Host                       string   `yaml:"host"`
+	Port                       int      `yaml:"port"`
+	APIKeys                    []string `yaml:"api_keys"`
+	ReadOnlyKeys               []string `yaml:"read_only_keys"`
+	AllowUnauthenticatedRead   bool     `yaml:"allow_unauthenticated_read"`
+	AllowInsecureLegacyAPIKeys bool     `yaml:"allow_insecure_legacy_api_keys,omitempty"`
+	CORSOrigins                []string `yaml:"cors_origins"`
+	TLSCert                    string   `yaml:"tls_cert"` // path to TLS certificate file
+	TLSKey                     string   `yaml:"tls_key"`  // path to TLS private key file
 }
 
 // SyslogConfig holds syslog ingestion settings.
@@ -126,8 +127,9 @@ type SyslogConfig struct {
 
 // CollectorsConfig controls the reference collectors running with the engine.
 type CollectorsConfig struct {
-	Enabled bool              `yaml:"enabled"`
-	Sources []CollectorConfig `yaml:"sources"`
+	Enabled  bool              `yaml:"enabled"`
+	StateDir string            `yaml:"state_dir,omitempty"`
+	Sources  []CollectorConfig `yaml:"sources"`
 }
 
 type CollectorConfig struct {
@@ -512,6 +514,14 @@ func (c *Config) Validate() (warnings []string, errs []string) {
 	}
 
 	// TLS files
+	if c.Server.AllowInsecureLegacyAPIKeys {
+		warnings = append(warnings, "shared API keys over non-loopback plaintext HTTP are enabled; restrict the backend to a trusted TLS-terminating proxy")
+	}
+	if c.Cloud.Enabled {
+		if err := validateCloudAPIURL(c.Cloud.APIURL); err != nil {
+			errs = append(errs, err.Error())
+		}
+	}
 	if (c.Server.TLSCert == "") != (c.Server.TLSKey == "") {
 		errs = append(errs, "server.tls_cert and server.tls_key must be set together")
 	}

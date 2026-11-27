@@ -54,7 +54,9 @@ func (m *Manager) StartAll(ctx context.Context, cfg core.CollectorsConfig, bus *
 		case "json", "jsonlog":
 			c = NewJSONLogCollector(cc.LogPath, cc.Tag)
 		case "github":
-			c = NewGitHubCollector(cc.LogPath, cc.Tag)
+			github := NewGitHubCollector(cc.LogPath, cc.Tag)
+			github.useCheckpointDir(cfg.StateDir)
+			c = github
 		}
 
 		if err := c.Start(ctx, bus, m.logger); err != nil {

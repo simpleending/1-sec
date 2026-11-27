@@ -22,6 +22,7 @@ service:
 
 server:
   allowUnauthenticatedRead: false
+  allowInsecureLegacyAPIKeys: false # Opt in only for a network-restricted TLS proxy backend.
 
 networkPolicy:
   enabled: true
@@ -158,5 +159,6 @@ startupProbe:
 # ── ServiceAccount ────────────────────────────────────────────────────────────
 serviceAccount:
   create: true
+  automountToken: false # The engine does not call the Kubernetes API.
   annotations: {}
   name: ""

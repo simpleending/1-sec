@@ -6,10 +6,7 @@ on:
       - "v*"
 
 permissions:
-  contents: write
-  id-token: write
-  attestations: write
-  security-events: write
+  contents: read
 
 jobs:
   quality:
@@ -17,6 +14,23 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check release tag and source
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          if ! [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Release tag must match the approved version format" >&2
+            exit 1
+          fi
+          git merge-base --is-ancestor HEAD refs/remotes/origin/main || {
+            echo "Release tags must point to a commit from main" >&2
+            exit 1
+          }
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -95,6 +109,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Configure MSVC cross tools (Windows ARM64)
         if: matrix.target == 'aarch64-pc-windows-msvc'
@@ -144,20 +160,22 @@ jobs:
         working-directory: rust/1sec-engine
         env:
           ONESEC_VERSION: ${{ github.ref_name }}
-        run: cargo build --release --no-default-features --target ${{ matrix.target }}
+        run: cargo build --locked --release --no-default-features --target ${{ matrix.target }}
 
       - name: Test (native targets only)
         if: matrix.native
         working-directory: rust/1sec-engine
-        run: cargo test --no-default-features --target ${{ matrix.target }}
+        run: cargo test --locked --no-default-features --target ${{ matrix.target }}
 
       - name: Verify native sidecar version
         if: matrix.native
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
         shell: bash
         run: |
           binary="rust/1sec-engine/target/${{ matrix.target }}/release/1sec-engine"
           if [ "${{ runner.os }}" = "Windows" ]; then binary="${binary}.exe"; fi
-          "$binary" --version | grep -F "${{ github.ref_name }}"
+          "$binary" --version | grep -F -- "$RELEASE_TAG"
 
       - name: Rust dependency audit
         working-directory: rust/1sec-engine
@@ -184,11 +202,16 @@ jobs:
   release:
     needs: [quality, rust-build]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -241,8 +264,9 @@ jobs:
       - name: Attach Rust binaries to release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          gh release upload ${{ github.ref_name }} upload/* --clobber
+          gh release upload "$RELEASE_TAG" upload/* --clobber
 
       - name: Verify complete signed release and publish
         env:

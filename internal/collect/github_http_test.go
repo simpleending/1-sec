@@ -1,6 +1,7 @@
 package collect
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -34,7 +35,7 @@ func TestGitHubResponseBoundary(t *testing.T) {
 				}
 				return &http.Response{StatusCode: tc.status, Body: io.NopCloser(strings.NewReader(tc.body)), Header: make(http.Header), Request: req}, nil
 			})
-			runs, err := c.fetchWorkflowRuns(t.Context())
+			runs, err := c.fetchWorkflowPage(t.Context(), 1)
 			if (err == nil) != tc.valid {
 				t.Fatalf("unexpected result: %v", err)
 			}
@@ -62,7 +63,7 @@ func TestGitHubRedirectBoundary(t *testing.T) {
 			}
 			return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(body)), Header: header, Request: req}, nil
 		})
-		_, err := c.fetchWorkflowRuns(t.Context())
+		_, err := c.fetchWorkflowPage(t.Context(), 1)
 		allowed := target == "https://api.github.com/repos/new/runs"
 		if (err == nil) != allowed || (!allowed && calls != 1) {
 			t.Fatalf("redirect %s: calls=%d err=%v", target, calls, err)
@@ -70,22 +71,48 @@ func TestGitHubRedirectBoundary(t *testing.T) {
 	}
 }
 
-func TestGitHubPollProcessesNewestFirstResponseWithoutSkipping(t *testing.T) {
-	cfg := &core.BusConfig{Embedded: true, Port: -1, DataDir: t.TempDir()}
-	bus, err := core.NewEventBus(cfg, zerolog.Nop())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer bus.Close()
-
-	c := NewGitHubCollector("owner/repo", "")
-	c.httpClient.Transport = githubResponseTransport(func(req *http.Request) (*http.Response, error) {
-		body := `{"workflow_runs":[{"id":43},{"id":42}]}`
+func TestGitHubPollTracksAttemptsStatesAndRestart(t *testing.T) {
+	body := `{"workflow_runs":[{"id":43,"run_attempt":1,"status":"queued"},{"id":42,"run_attempt":1,"status":"completed","conclusion":"success"}]}`
+	integration := githubResponseTransport(func(req *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header), Request: req}, nil
 	})
-	c.poll(t.Context(), bus, zerolog.Nop())
-	c.poll(t.Context(), bus, zerolog.Nop())
-	if count := bus.GetMetrics()["events_published"]; count != 2 || c.lastSeen != 43 {
-		t.Fatalf("published %d events with cursor %d", count, c.lastSeen)
+	dir := t.TempDir()
+	makeCollector := func() *GitHubCollector {
+		c := NewGitHubCollector("owner/repo", "")
+		c.httpClient.Transport = integration
+		c.useCheckpointDir(dir)
+		if err := c.loadCheckpoint(); err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	c := makeCollector()
+	var got []*core.SecurityEvent
+	publish := func(e *core.SecurityEvent) error {
+		got = append(got, e)
+		return nil
+	}
+	logger := zerolog.Nop()
+	c.poll(t.Context(), publish, logger)
+	c.poll(t.Context(), publish, logger)
+	if len(got) != 2 || got[0].Details["run_id"] != "42" || got[1].Details["run_id"] != "43" {
+		t.Fatalf("first snapshots not published once in deterministic order: %+v", got)
+	}
+
+	body = `{"workflow_runs":[{"id":43,"run_attempt":1,"status":"completed","conclusion":"failure"}]}`
+	c.poll(t.Context(), func(*core.SecurityEvent) error { return errors.New("ordinary temporary publisher failure") }, logger)
+	c.poll(t.Context(), publish, logger)
+	if len(got) != 3 || got[2].Details["action"] != "failure" || got[2].Severity != core.SeverityMedium {
+		t.Fatal("same-run failure was not retried and emitted")
+	}
+	c = makeCollector()
+	c.poll(t.Context(), publish, logger)
+	if len(got) != 3 {
+		t.Fatal("restart replayed a checkpointed state")
+	}
+	body = `{"workflow_runs":[{"id":43,"run_attempt":2,"status":"queued"}]}`
+	c.poll(t.Context(), publish, logger)
+	if len(got) != 4 || got[3].Details["run_attempt"] != 2 {
+		t.Fatal("new attempt was not emitted")
 	}
 }

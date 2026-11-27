@@ -159,8 +159,10 @@ func (b *RustMatchBridge) handleMatchResult(data []byte) {
 		desc.WriteString(fmt.Sprintf("  - [%s] %s in field %q\n", m.Severity, m.PatternName, m.Field))
 	}
 
+	// Older sidecars do not carry the unsigned input's observation-only status.
+	// A result without independently verified sensor evidence stays investigative.
 	alert := &Alert{
-		ObservationOnly: invalidSensor,
+		ObservationOnly: invalidSensor || sensorEvent == nil,
 		ID:              uuid.New().String(),
 		Timestamp:       result.Timestamp,
 		Module:          inferModule(result.Matches),

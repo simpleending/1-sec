@@ -73,8 +73,20 @@ func httpPost(url, contentType string, body []byte) (*http.Response, error) {
 	return alertWebhookClient.Post(url, contentType, bytes.NewReader(body))
 }
 
-func newAuthRequest(method, url string, body []byte, apiKey string) (*http.Request, error) {
-	req, err := http.NewRequest(method, url, bytes.NewReader(body))
+func validateCloudAPIURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Hostname() == "" || u.User != nil || u.Opaque != "" || u.Fragment != "" ||
+		(u.Scheme != "https" && !(u.Scheme == "http" && isLoopbackHost(u.Hostname()))) {
+		return fmt.Errorf("cloud API URL must use HTTPS (HTTP is allowed only for loopback) and must not contain URL credentials")
+	}
+	return nil
+}
+
+func newAuthRequest(method, endpoint string, body []byte, apiKey string) (*http.Request, error) {
+	if err := validateCloudAPIURL(endpoint); err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequest(method, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}

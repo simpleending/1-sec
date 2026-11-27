@@ -7,6 +7,8 @@ server:
   host: "127.0.0.1"
   port: 1780
   allow_unauthenticated_read: false
+  # Set true only for a network-restricted backend behind a separate TLS proxy.
+  allow_insecure_legacy_api_keys: false
   # API key authentication — set one or more keys to secure the REST API.
   # If empty, read endpoints are open only on loopback binds. Non-loopback
   # binds serve only /health unless allow_unauthenticated_read is true.
@@ -92,6 +94,7 @@ syslog:
 # File collectors can run inside '1sec up' using the engine's embedded bus.
 collectors:
   enabled: false
+  # state_dir: "./data/collector-checkpoints"  # Optional GitHub run history checkpoint.
   sources: []
   # sources:
   #   - type: nginx

@@ -33,12 +33,13 @@ type EventBus struct {
 
 // BusMetrics tracks event bus performance counters.
 type BusMetrics struct {
-	mu              sync.Mutex `json:"-"`
-	EventsPublished int64      `json:"events_published"`
-	EventsFailed    int64      `json:"events_failed"`
-	AlertsPublished int64      `json:"alerts_published"`
-	MessagesAcked   int64      `json:"messages_acked"`
-	MessagesNaked   int64      `json:"messages_naked"`
+	mu                 sync.Mutex `json:"-"`
+	EventsPublished    int64      `json:"events_published"`
+	EventsFailed       int64      `json:"events_failed"`
+	AlertsPublished    int64      `json:"alerts_published"`
+	MessagesAcked      int64      `json:"messages_acked"`
+	MessagesNaked      int64      `json:"messages_naked"`
+	MessagesTerminated int64      `json:"messages_terminated"`
 }
 
 // NewEventBus creates a new EventBus. If cfg.Embedded is true, it starts an embedded NATS server.
@@ -332,11 +333,17 @@ func (b *EventBus) SubscribeToAllEvents(handler func(event *SecurityEvent)) erro
 	return b.Subscribe("sec.events.>", "1sec-engine-events", func(msg *nats.Msg) {
 		event, err := UnmarshalSecurityEvent(msg.Data)
 		if err != nil {
-			b.logger.Error().Err(err).Msg("failed to unmarshal event")
-			_ = msg.Nak()
-			b.metrics.mu.Lock()
-			b.metrics.MessagesNaked++
-			b.metrics.mu.Unlock()
+			// Decoding the same stored bytes again will not repair the record.
+			// Term ends this consumer's retry; the limits-retention stream keeps
+			// the original bytes subject to its configured age and size bounds.
+			b.logger.Error().Str("subject", msg.Subject).Msg("invalid security event; retaining source record without retry")
+			if err := msg.Term(); err != nil {
+				b.logger.Error().Err(err).Msg("terminating invalid security event")
+			} else {
+				b.metrics.mu.Lock()
+				b.metrics.MessagesTerminated++
+				b.metrics.mu.Unlock()
+			}
 			return
 		}
 		if event.Sensor != nil || strings.HasPrefix(event.ID, "sensor-") || strings.HasPrefix(event.Source, "sensor/") {
@@ -414,10 +421,11 @@ func (b *EventBus) GetMetrics() map[string]int64 {
 	b.metrics.mu.Lock()
 	defer b.metrics.mu.Unlock()
 	return map[string]int64{
-		"events_published": b.metrics.EventsPublished,
-		"events_failed":    b.metrics.EventsFailed,
-		"alerts_published": b.metrics.AlertsPublished,
-		"messages_acked":   b.metrics.MessagesAcked,
-		"messages_naked":   b.metrics.MessagesNaked,
+		"events_published":    b.metrics.EventsPublished,
+		"events_failed":       b.metrics.EventsFailed,
+		"alerts_published":    b.metrics.AlertsPublished,
+		"messages_acked":      b.metrics.MessagesAcked,
+		"messages_naked":      b.metrics.MessagesNaked,
+		"messages_terminated": b.metrics.MessagesTerminated,
 	}
 }
