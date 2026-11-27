@@ -58,14 +58,18 @@ impl SourceTracker {
     }
 
     fn track(&mut self, src_ip: &str, dst_port: u16) -> Vec<String> {
+        self.track_at(src_ip, dst_port, std::time::Instant::now())
+    }
+
+    fn track_at(&mut self, src_ip: &str, dst_port: u16, now: std::time::Instant) -> Vec<String> {
         let mut anomalies = Vec::new();
 
         // Reset counters periodically
-        if self.last_reset.elapsed().as_secs() > STATS_INTERVAL_SECS {
+        if now.saturating_duration_since(self.last_reset).as_secs() > STATS_INTERVAL_SECS {
             self.port_scans.clear();
             self.packet_counts.clear();
             self.admission_order.clear();
-            self.last_reset = std::time::Instant::now();
+            self.last_reset = now;
         }
 
         // Track port scan behavior
@@ -124,13 +128,24 @@ impl SSHTracker {
     }
 
     fn track(&mut self, src_ip: &str, dst_ip: &str, dst_port: u16, payload: &[u8]) -> Vec<String> {
+        self.track_at(src_ip, dst_ip, dst_port, payload, std::time::Instant::now())
+    }
+
+    fn track_at(
+        &mut self,
+        src_ip: &str,
+        dst_ip: &str,
+        dst_port: u16,
+        payload: &[u8],
+        now: std::time::Instant,
+    ) -> Vec<String> {
         let mut anomalies = Vec::new();
 
         // Reset periodically
-        if self.last_reset.elapsed().as_secs() > STATS_INTERVAL_SECS {
+        if now.saturating_duration_since(self.last_reset).as_secs() > STATS_INTERVAL_SECS {
             self.flow_channel_opens.clear();
             self.admission_order.clear();
-            self.last_reset = std::time::Instant::now();
+            self.last_reset = now;
         }
 
         if dst_port != 22 {
@@ -152,7 +167,6 @@ impl SSHTracker {
             return anomalies;
         }
 
-        let now = std::time::Instant::now();
         if !self.flow_channel_opens.contains_key(&key) {
             if self.flow_channel_opens.len() >= MAX_TRACKED_SSH_FLOWS {
                 if let Some(oldest) = self.admission_order.pop_front() {
@@ -167,8 +181,8 @@ impl SSHTracker {
         }
         let timestamps = self.flow_channel_opens.entry(key.clone()).or_default();
         timestamps.push(now);
-        let window_start = now - std::time::Duration::from_secs(SSH_TRACKER_WINDOW_SECS);
-        timestamps.retain(|t| *t >= window_start);
+        let window = std::time::Duration::from_secs(SSH_TRACKER_WINDOW_SECS);
+        timestamps.retain(|t| now.saturating_duration_since(*t) <= window);
         if timestamps.len() > SSH_MAX_CHANNEL_OPENS_PER_SEC {
             anomalies.push(format!(
                 "ssh_channel_exhaustion: flow {} sent {} visible channel-open requests in {}s (threshold: {})",
@@ -230,10 +244,30 @@ impl WebSocketTracker {
         dst_port: u16,
         payload: &[u8],
     ) -> Vec<String> {
-        let now = std::time::Instant::now();
-        if self.last_prune.elapsed().as_secs() >= STATS_INTERVAL_SECS {
-            let cutoff = now - std::time::Duration::from_secs(WEBSOCKET_FLOW_TTL_SECS);
-            self.flows.retain(|_, last_seen| *last_seen >= cutoff);
+        self.track_at(
+            src_ip,
+            src_port,
+            dst_ip,
+            dst_port,
+            payload,
+            std::time::Instant::now(),
+        )
+    }
+
+    fn track_at(
+        &mut self,
+        src_ip: &str,
+        src_port: u16,
+        dst_ip: &str,
+        dst_port: u16,
+        payload: &[u8],
+        now: std::time::Instant,
+    ) -> Vec<String> {
+        if now.saturating_duration_since(self.last_prune).as_secs() >= STATS_INTERVAL_SECS {
+            let ttl = std::time::Duration::from_secs(WEBSOCKET_FLOW_TTL_SECS);
+            // Compare observed age; shifting the clock backwards can overflow on Windows.
+            self.flows
+                .retain(|_, last_seen| now.saturating_duration_since(*last_seen) <= ttl);
             self.admission_order
                 .retain(|key| self.flows.contains_key(key));
             self.last_prune = now;
@@ -808,9 +842,8 @@ mod packet_util_tests {
             .iter()
             .any(|a| a.contains("tracking_capacity")));
         assert!(tracker.port_scans.contains_key("new-source"));
-        tracker.last_reset =
-            std::time::Instant::now() - std::time::Duration::from_secs(STATS_INTERVAL_SECS + 2);
-        tracker.track("new-source", 80);
+        let later = tracker.last_reset + std::time::Duration::from_secs(STATS_INTERVAL_SECS + 2);
+        tracker.track_at("new-source", 80, later);
         assert_eq!(tracker.port_scans.len(), 1);
         assert!(tracker.port_scans.contains_key("new-source"));
     }
@@ -844,9 +877,8 @@ mod packet_util_tests {
             .iter()
             .any(|message| message.contains("ssh_oversized_frame")));
         assert_eq!(tracker.flow_channel_opens.len(), MAX_TRACKED_SSH_FLOWS);
-        tracker.last_reset =
-            std::time::Instant::now() - std::time::Duration::from_secs(STATS_INTERVAL_SECS + 2);
-        tracker.track("new-source", "destination", 22, &channel_open);
+        let later = tracker.last_reset + std::time::Duration::from_secs(STATS_INTERVAL_SECS + 2);
+        tracker.track_at("new-source", "destination", 22, &channel_open, later);
         assert_eq!(tracker.flow_channel_opens.len(), 1);
     }
 
@@ -875,15 +907,66 @@ mod packet_util_tests {
         assert!(!tracker
             .track("new-source", 65000, "198.51.100.1", 80, &[0x82, 0])
             .is_empty());
-        let expired =
-            std::time::Instant::now() - std::time::Duration::from_secs(WEBSOCKET_FLOW_TTL_SECS + 2);
-        for seen in tracker.flows.values_mut() {
-            *seen = expired;
-        }
-        tracker.last_prune =
-            std::time::Instant::now() - std::time::Duration::from_secs(STATS_INTERVAL_SECS + 2);
-        tracker.track("new-source", 65000, "198.51.100.1", 80, upgrade);
+        let later =
+            std::time::Instant::now() + std::time::Duration::from_secs(WEBSOCKET_FLOW_TTL_SECS + 2);
+        tracker.track_at("new-source", 65000, "198.51.100.1", 80, upgrade, later);
         assert_eq!(tracker.flows.len(), 1);
+    }
+
+    #[test]
+    fn websocket_first_prune_retains_recent_and_exact_ttl_flows() {
+        use std::time::Duration;
+        let mut tracker = WebSocketTracker::new();
+        let origin = tracker.last_prune;
+        let exact_key = WebSocketTracker::flow_key("192.0.2.1", 2001, "198.51.100.2", 80);
+        let recent_key = WebSocketTracker::flow_key("192.0.2.1", 2002, "198.51.100.2", 80);
+        tracker.flows.insert(exact_key.clone(), origin);
+        tracker.admission_order.push_back(exact_key.clone());
+        let first_prune = origin + Duration::from_secs(STATS_INTERVAL_SECS);
+        tracker.track_at("192.0.2.9", 9999, "198.51.100.2", 80, b"", first_prune);
+        assert_eq!(tracker.last_prune, first_prune);
+        assert!(tracker.flows.contains_key(&exact_key));
+
+        tracker.flows.insert(recent_key.clone(), first_prune);
+        tracker.admission_order.push_back(recent_key.clone());
+        let at_ttl = origin + Duration::from_secs(WEBSOCKET_FLOW_TTL_SECS);
+        tracker.track_at("192.0.2.9", 9999, "198.51.100.2", 80, b"", at_ttl);
+        assert!(tracker.flows.contains_key(&exact_key));
+        assert!(tracker.flows.contains_key(&recent_key));
+
+        let expired = at_ttl + Duration::from_secs(STATS_INTERVAL_SECS);
+        tracker.track_at("192.0.2.9", 9999, "198.51.100.2", 80, b"", expired);
+        assert!(!tracker.flows.contains_key(&exact_key));
+        assert!(!tracker.admission_order.contains(&exact_key));
+        assert!(tracker.flows.contains_key(&recent_key));
+    }
+
+    #[test]
+    fn ssh_channel_window_retains_exact_boundary_then_expires_history() {
+        use std::time::Duration;
+        let mut tracker = SSHTracker::new();
+        let origin = tracker.last_reset;
+        let boundary = origin + Duration::from_secs(SSH_TRACKER_WINDOW_SECS);
+        let key = SSHTracker::flow_key("192.0.2.1", "198.51.100.2", 22);
+        let channel_open = [90];
+        assert!(tracker
+            .track_at("192.0.2.1", "198.51.100.2", 22, &channel_open, origin)
+            .is_empty());
+        assert!(tracker
+            .track_at("192.0.2.1", "198.51.100.2", 22, &channel_open, boundary)
+            .is_empty());
+        assert_eq!(tracker.flow_channel_opens[&key], [origin, boundary]);
+        let past_boundary = boundary + Duration::from_millis(1);
+        assert!(tracker
+            .track_at(
+                "192.0.2.1",
+                "198.51.100.2",
+                22,
+                &channel_open,
+                past_boundary
+            )
+            .is_empty());
+        assert_eq!(tracker.flow_channel_opens[&key], [boundary, past_boundary]);
     }
 
     #[test]
