@@ -304,7 +304,8 @@ func CanonicalEventSchemas() []EventSchema {
 
 		// ── Supply Chain ────────────────────────────────────────────────
 		{Type: "package_install", Category: "supply_chain", RequiredKeys: []string{"package_name"}, OptionalKeys: []string{"version", "registry", "hash", "expected_hash", "scope"}, Description: "Package installation"},
-		{Type: "build_artifact", Category: "supply_chain", RequiredKeys: []string{"artifact_name"}, OptionalKeys: []string{"signature", "provenance", "hash"}, Description: "Build artifact event"},
+		{Type: "build_artifact", Category: "supply_chain", RequiredKeys: []string{"artifact_name"}, OptionalKeys: []string{"signature", "provenance", "hash", "provenance_policy_result"}, Description: "Build artifact event"},
+		{Type: "artifact_deploy", Category: "supply_chain", RequiredKeys: []string{"artifact_name"}, OptionalKeys: []string{"signature", "provenance", "hash", "provenance_policy_result"}, Description: "Deployment artifact event"},
 		{Type: "cicd_event", Category: "supply_chain", RequiredKeys: []string{"action"}, OptionalKeys: []string{"pipeline_name", "user"}, Description: "CI/CD pipeline event"},
 		{Type: "sbom_scan", Category: "supply_chain", RequiredKeys: []string{}, OptionalKeys: []string{"vulnerability_count", "critical_count", "high_count"}, Description: "SBOM vulnerability scan result"},
 

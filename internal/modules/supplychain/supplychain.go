@@ -158,6 +158,14 @@ func (s *Sentinel) handleArtifactEvent(event *core.SecurityEvent) {
 		return
 	}
 
+	// A trusted verifier can report that an attestation failed its build-identity
+	// policy even when signature and provenance metadata are both present.
+	// Missing, unknown and unevaluated results are not verification failures.
+	if result, ok := event.Details["provenance_policy_result"].(string); ok && result == "failed" {
+		s.raiseAlert(event, core.SeverityHigh, "Reported Artifact Provenance Policy Failure",
+			fmt.Sprintf("The event source reported that artifact %s failed its provenance policy. Inspect the verifier result and expected build identity.", artifactName),
+			"artifact_provenance_policy_failed")
+	}
 	// Check for unsigned artifacts
 	if signature == "" {
 		s.raiseAlert(event, core.SeverityHigh,
@@ -263,6 +271,11 @@ func (s *Sentinel) handleSBOMEvent(event *core.SecurityEvent) {
 
 func (s *Sentinel) raiseAlert(event *core.SecurityEvent, severity core.Severity, title, description, alertType string) {
 	newEvent := core.NewDerivedEvent(event, ModuleName, alertType, severity, description)
+	// A verdict supplied by an adapter is evidence, not an enforcement grant.
+	// Mark the derived event before both publication and alert construction.
+	if alertType == "artifact_provenance_policy_failed" {
+		newEvent.ObservationOnly = true
+	}
 	newEvent.SourceIP = event.SourceIP
 	newEvent.Details["original_event_id"] = event.ID
 
@@ -761,6 +774,11 @@ func getSupplyChainMitigations(alertType string) []string {
 			"Remove preinstall/postinstall hooks that fetch or execute remote code",
 			"Pin dependency versions and hashes so install-time drift is visible in CI/CD",
 			"Treat obfuscated base64, eval, curl|sh, and wget|bash chains as high-risk by default",
+		}
+	case "artifact_provenance_policy_failed":
+		return []string{
+			"Review the trusted verifier's result for this artifact digest",
+			"Compare the verified repository, workflow identity and source revision with the expected release policy",
 		}
 	case "unsigned_artifact":
 		return []string{
