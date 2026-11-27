@@ -97,12 +97,12 @@ func TestApprovalRechecksCurrentExecutionControls(t *testing.T) {
 				re.mu.Lock()
 				policy.Cooldown = time.Minute
 				re.mu.Unlock()
-				re.setCooldown("injection_shield:block_ip:198.51.100.8", time.Minute)
+				re.setCooldown(responseBudgetLane(a)+":block_ip:198.51.100.8", time.Minute)
 			case "rate-limit":
 				re.mu.Lock()
 				policy.MaxActionsPerMin = 1
 				re.mu.Unlock()
-				re.checkRateLimit(a.Module, 1)
+				re.checkRateLimit(responseBudgetLane(a), 1)
 			case "stopped":
 				re.cancel()
 			}

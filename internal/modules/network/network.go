@@ -34,6 +34,7 @@ type Guardian struct {
 	c2Detector   *C2Detector
 	lateralMon   *LateralMovementMonitor
 	portScanDet  *PortScanDetector
+	observations *Guardian
 }
 
 func New() *Guardian { return &Guardian{} }
@@ -65,13 +66,10 @@ func (g *Guardian) Start(ctx context.Context, bus *core.EventBus, pipeline *core
 	settings := cfg.GetModuleSettings(ModuleName)
 	maxReqPerMin := getIntSetting(settings, "max_requests_per_minute", 1000)
 	burstSize := getIntSetting(settings, "burst_size", 100)
-	g.rateLimiter = NewRateLimiter(maxReqPerMin, burstSize)
-	g.ipReputation = NewIPReputation()
 	g.geoFence = NewGeoFence(settings)
-	g.dnsTunnelDet = NewDNSTunnelDetector()
-	g.c2Detector = NewC2Detector()
-	g.lateralMon = NewLateralMovementMonitor()
-	g.portScanDet = NewPortScanDetector()
+	g.startState(maxReqPerMin, burstSize)
+	g.observations = &Guardian{logger: g.logger, bus: g.bus, pipeline: g.pipeline, cfg: g.cfg, ctx: g.ctx, geoFence: g.geoFence}
+	g.observations.startState(maxReqPerMin, burstSize)
 
 	// Cleanup loops replaced by bounded LRU caches
 	// Start dynamic IP threat score cleanup
@@ -84,6 +82,7 @@ func (g *Guardian) Start(ctx context.Context, bus *core.EventBus, pipeline *core
 				return
 			case <-ticker.C:
 				g.ipReputation.CleanupScores(1 * time.Hour)
+				g.observations.ipReputation.CleanupScores(1 * time.Hour)
 			}
 		}
 	}()
@@ -95,6 +94,15 @@ func (g *Guardian) Start(ctx context.Context, bus *core.EventBus, pipeline *core
 	return nil
 }
 
+func (g *Guardian) startState(maxReqPerMin, burstSize int) {
+	g.rateLimiter = NewRateLimiter(maxReqPerMin, burstSize)
+	g.ipReputation = NewIPReputation()
+	g.dnsTunnelDet = NewDNSTunnelDetector()
+	g.c2Detector = NewC2Detector()
+	g.lateralMon = NewLateralMovementMonitor()
+	g.portScanDet = NewPortScanDetector()
+}
+
 func (g *Guardian) Stop() error {
 	if g.cancel != nil {
 		g.cancel()
@@ -103,6 +111,15 @@ func (g *Guardian) Stop() error {
 }
 
 func (g *Guardian) HandleEvent(event *core.SecurityEvent) error {
+	if g.observations != nil && !core.EventMayAffectLocalResponse(event) {
+		observed := *event
+		observed.ObservationOnly = true
+		return g.observations.handleEvent(&observed)
+	}
+	return g.handleEvent(event)
+}
+
+func (g *Guardian) handleEvent(event *core.SecurityEvent) error {
 	// Cross-module dynamic IP threat scoring: when ANY module fires an alert-worthy
 	// event with a source IP, accumulate threat points. IPs that trigger multiple
 	// modules get auto-blocked. This replaces the need for external TI feeds.

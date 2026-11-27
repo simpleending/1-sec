@@ -193,8 +193,9 @@ func NewResponseEngine(logger zerolog.Logger, bus *EventBus, pipeline *AlertPipe
 				re.recordAction(pa.Alert, pa.Rule, pa.Target, ActionStatusDryRun, "dry run at approval execution", 0, nil)
 				return
 			}
-			key := fmt.Sprintf("%s:%s:%s", pa.Module, pa.Action, re.resolveTarget(pa.Alert, currentRule))
-			if re.isOnCooldown(key, policy.Cooldown) || !re.checkRateLimit(pa.Module, policy.MaxActionsPerMin) {
+			lane := responseBudgetLane(pa.Alert)
+			key := fmt.Sprintf("%s:%s:%s", lane, pa.Action, re.resolveTarget(pa.Alert, currentRule))
+			if re.isOnCooldown(key, policy.Cooldown) || !re.checkRateLimit(lane, policy.MaxActionsPerMin) {
 				re.recordAction(pa.Alert, pa.Rule, pa.Target, ActionStatusSkipped, "approved action exceeds current cooldown or rate limit", 0, nil)
 				return
 			}
@@ -376,6 +377,7 @@ func (re *ResponseEngine) handleAlert(alert *Alert) {
 
 	globalDryRun := re.cfg.Enforcement != nil && re.cfg.Enforcement.GetDryRun()
 
+	lane := responseBudgetLane(alert)
 	for _, rule := range policy.Actions {
 		if alert.Severity < rule.MinSeverity {
 			continue
@@ -389,7 +391,7 @@ func (re *ResponseEngine) handleAlert(alert *Alert) {
 		}
 
 		target := re.resolveTarget(alert, rule)
-		cooldownKey := fmt.Sprintf("%s:%s:%s", alert.Module, rule.Action, target)
+		cooldownKey := fmt.Sprintf("%s:%s:%s", lane, rule.Action, target)
 
 		// Check cooldown
 		if re.isOnCooldown(cooldownKey, policy.Cooldown) {
@@ -398,7 +400,7 @@ func (re *ResponseEngine) handleAlert(alert *Alert) {
 		}
 
 		// Check rate limit
-		if !re.checkRateLimit(alert.Module, policy.MaxActionsPerMin) {
+		if !re.checkRateLimit(lane, policy.MaxActionsPerMin) {
 			re.logger.Warn().Str("module", alert.Module).Msg("rate limit exceeded, skipping action")
 			re.recordAction(alert, rule, target, ActionStatusSkipped, "rate limit exceeded", 0, nil)
 			continue
@@ -469,6 +471,15 @@ func (re *ResponseEngine) handleAlert(alert *Alert) {
 			re.setCooldown(cooldownKey, policy.Cooldown)
 		}
 	}
+}
+
+// Notifications from observation-only alerts must not consume the response
+// limits or cooldowns of enforcement-eligible alerts in the same module.
+func responseBudgetLane(alert *Alert) string {
+	if localResponseEvidenceAllowed(alert.ObservationOnly, alert.Sensor != nil, alert.sensorAuthority) {
+		return "eligible:" + alert.Module
+	}
+	return "observed:" + alert.Module
 }
 
 func (re *ResponseEngine) policyForAlert(alert *Alert) (*ResponsePolicy, bool) {

@@ -35,6 +35,7 @@ type Fortress struct {
 	sprayDet     *PasswordSprayDetector
 	aitmDet      *AitMDetector
 	revokedJTIs  *lru.Cache[string, time.Time]
+	observations *Fortress
 }
 
 func New() *Fortress { return &Fortress{} }
@@ -73,6 +74,21 @@ func (f *Fortress) Start(ctx context.Context, bus *core.EventBus, pipeline *core
 	lockoutDuration := getIntSetting(settings, "lockout_duration_seconds", 300)
 	stuffingThreshold := getIntSetting(settings, "stuffing_threshold", 50)
 
+	f.startState(maxFailures, stuffingThreshold, lockoutDuration)
+	f.observations = &Fortress{logger: f.logger, bus: f.bus, pipeline: f.pipeline, cfg: f.cfg, ctx: f.ctx}
+	f.observations.startState(maxFailures, stuffingThreshold, lockoutDuration)
+
+	f.logger.Info().
+		Int("max_failures", maxFailures).
+		Int("lockout_sec", lockoutDuration).
+		Msg("auth fortress started")
+	return nil
+}
+
+// The two lanes share configuration and sinks, but never mutable detection
+// history: observation-only success, failures, sessions and token state must
+// not change an enforcement-eligible decision.
+func (f *Fortress) startState(maxFailures, stuffingThreshold, lockoutDuration int) {
 	f.loginTracker = NewLoginTracker(maxFailures, stuffingThreshold, time.Duration(lockoutDuration)*time.Second)
 	f.sessionMon = NewSessionMonitor()
 	f.oauthMon = NewOAuthMonitor()
@@ -82,12 +98,6 @@ func (f *Fortress) Start(ctx context.Context, bus *core.EventBus, pipeline *core
 
 	go f.oauthMon.CleanupLoop(f.ctx)
 	go f.sprayDet.CleanupLoop(f.ctx)
-
-	f.logger.Info().
-		Int("max_failures", maxFailures).
-		Int("lockout_sec", lockoutDuration).
-		Msg("auth fortress started")
-	return nil
 }
 
 func (f *Fortress) Stop() error {
@@ -98,6 +108,15 @@ func (f *Fortress) Stop() error {
 }
 
 func (f *Fortress) HandleEvent(event *core.SecurityEvent) error {
+	if f.observations != nil && !core.EventMayAffectLocalResponse(event) {
+		observed := *event
+		observed.ObservationOnly = true
+		return f.observations.handleEvent(&observed)
+	}
+	return f.handleEvent(event)
+}
+
+func (f *Fortress) handleEvent(event *core.SecurityEvent) error {
 	switch event.Type {
 	case "login_attempt", "auth_attempt":
 		f.handleLoginAttempt(event)

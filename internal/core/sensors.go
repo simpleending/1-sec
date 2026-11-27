@@ -462,13 +462,23 @@ func sensorResponseAllowed(alert *Alert, action ActionType) bool {
 	if action == ActionLog || action == ActionWebhook {
 		return true
 	}
-	if alert.ObservationOnly {
+	return localResponseEvidenceAllowed(alert.ObservationOnly, alert.Sensor != nil, alert.sensorAuthority)
+}
+
+// EventMayAffectLocalResponse classifies detector state mutations, not individual
+// actions. Non-authoritative inputs can be analyzed but must not influence state
+// that is later used to authorize host response to a different event.
+func EventMayAffectLocalResponse(event *SecurityEvent) bool {
+	return localResponseEvidenceAllowed(event.ObservationOnly, event.Sensor != nil, event.sensorAuthority)
+}
+
+func localResponseEvidenceAllowed(observationOnly, hasSensor bool, a *sensorAuthority) bool {
+	if observationOnly {
 		return false
 	}
-	if alert.Sensor == nil {
+	if !hasSensor {
 		return true
 	}
-	a := alert.sensorAuthority
 	if a == nil || a.registry == nil {
 		return false
 	}
