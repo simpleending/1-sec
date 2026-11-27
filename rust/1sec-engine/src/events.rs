@@ -1,8 +1,58 @@
 //! Event types — mirrors the Go `core.SecurityEvent` and `core.Alert` structs
 //! so the Rust engine can deserialize events from NATS and publish results back.
 
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use time::{OffsetDateTime, UtcOffset};
+
+/// Go-compatible RFC3339 UTC timestamp, including when embedded in json!
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct EventTimestamp(#[serde(with = "utc_rfc3339")] OffsetDateTime);
+
+impl EventTimestamp {
+    pub fn now() -> Self {
+        Self(OffsetDateTime::now_utc())
+    }
+}
+
+mod utc_rfc3339 {
+    use serde::{Deserializer, Serializer};
+    use time::{serde::rfc3339, OffsetDateTime};
+
+    pub fn serialize<S: Serializer>(
+        value: &OffsetDateTime,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        rfc3339::serialize(&value.to_offset(super::UtcOffset::UTC), serializer)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<OffsetDateTime, D::Error> {
+        rfc3339::deserialize(deserializer)
+    }
+}
+
+#[cfg(test)]
+mod timestamp_tests {
+    use super::*;
+
+    #[test]
+    fn rfc3339_timestamp_retains_go_wire_shape_and_precision() {
+        let sample = "\"2026-11-27T12:13:14.123456789Z\"";
+        let wire: EventTimestamp = serde_json::from_str(sample).unwrap();
+        assert_eq!(serde_json::to_string(&wire).unwrap(), sample);
+        assert_eq!(
+            serde_json::json!({"timestamp": wire})["timestamp"],
+            "2026-11-27T12:13:14.123456789Z"
+        );
+
+        let offset: EventTimestamp =
+            serde_json::from_str("\"2026-11-27T19:13:14.123456789+07:00\"").unwrap();
+        assert_eq!(serde_json::to_string(&offset).unwrap(), sample);
+        assert!(serde_json::from_str::<EventTimestamp>("1234").is_err());
+    }
+}
 
 /// Mirrors `core.SecurityEvent` from the Go codebase.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -10,7 +60,7 @@ pub struct SecurityEvent {
     #[serde(default)]
     pub source_ip: String,
     pub id: String,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: EventTimestamp,
     pub module: String,
     #[serde(rename = "type")]
     pub event_type: String,
@@ -103,7 +153,7 @@ pub struct MatchResult {
     #[serde(default)]
     pub context: std::collections::HashMap<String, String>,
     pub event_id: String,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: EventTimestamp,
     pub matches: Vec<PatternMatch>,
     pub aggregate_score: f64,
     pub highest_severity: Severity,
@@ -125,7 +175,7 @@ pub struct PatternMatch {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PacketEvent {
     pub id: String,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: EventTimestamp,
     pub protocol: String,
     pub src_ip: String,
     pub src_port: u16,

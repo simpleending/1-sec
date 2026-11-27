@@ -7,3 +7,5 @@ Trusted no-sensor events still use the existing local-response lane. A signed se
 Observation notifications have their own per-module action quota and cooldown; they do not consume the eligible lane's budget. The thresholds are unchanged within each lane. The network threat list exposes eligible-lane reputation; observe-only findings are visible as alerts and do not imply an executable IP block.
 
 This covers Auth, Network, and response accounting. It does not claim an all-module audit or that other inputs, producer-side labels, notification webhooks, and custom policies are safe by default. Leave enforcement in dry-run on a mixed-trust deployment unless every relevant module and sensor configuration has been reviewed. Tests use local auth/network fixtures and mock responders; no live system is required for these checks.
+
+The Rust sidecar replaces the direct, unmaintained chrono dependency with the already-locked time crate. Its event, match-result and packet timestamps remain UTC RFC3339 strings; nanosecond precision and non-UTC input normalization are tested. No security gate or advisory policy was changed.

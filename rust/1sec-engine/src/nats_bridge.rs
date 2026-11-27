@@ -488,7 +488,7 @@ mod tests {
         assert_eq!(effective_workers(2), 2);
         let packet = crate::events::PacketEvent {
             id: "captured-packet".into(),
-            timestamp: "2026-10-26T00:00:00Z".parse().unwrap(),
+            timestamp: serde_json::from_str(r#""2026-10-26T00:00:00Z""#).unwrap(),
             protocol: "tcp".into(),
             src_ip: "192.0.2.10".into(),
             src_port: 12345,

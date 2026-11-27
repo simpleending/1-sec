@@ -153,7 +153,7 @@ impl PatternMatcher {
             return MatchResult {
                 context: std::collections::HashMap::new(),
                 event_id: event_id.to_string(),
-                timestamp: chrono::Utc::now(),
+                timestamp: crate::events::EventTimestamp::now(),
                 matches: Vec::new(),
                 aggregate_score: 0.0,
                 highest_severity: Severity::Info,
@@ -164,7 +164,7 @@ impl PatternMatcher {
         MatchResult {
             context: std::collections::HashMap::new(),
             event_id: event_id.to_string(),
-            timestamp: chrono::Utc::now(),
+            timestamp: crate::events::EventTimestamp::now(),
             matches,
             aggregate_score,
             highest_severity,

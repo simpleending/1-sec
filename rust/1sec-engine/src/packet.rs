@@ -536,7 +536,7 @@ pub async fn capture_loop(
 
         let event = PacketEvent {
             id: Uuid::new_v4().to_string(),
-            timestamp: chrono::Utc::now(),
+            timestamp: crate::events::EventTimestamp::now(),
             protocol,
             src_ip,
             src_port,
